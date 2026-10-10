@@ -23,6 +23,19 @@ All of PRD section 7 items 1-8, 11 and 12, through `shared.store` fixtures and f
 - Item 12 validation errors and the mixed-timezone error.
 - One test that `allocate` does not mutate its inputs.
 
+## Continuation (second dispatch of this phase)
+
+A first dispatch already produced `engine/allocate.py` and the allocation tests (19 tests pass; the 40% and 30% fixture numbers match PRD section 6 exactly, verified independently). Do NOT rewrite them. The architect's review found real defects, now specified as PRD D13 and D14. Read the current files and `specs/session-a-prd.md` (record all in artifacts_read).
+
+**First executor turn** (no prior-turn handoff context present): do items 1-4.
+
+1. `engine/explain.py`: implement D13's four `RETAINED_CONFIRMED` variants, selected in that order, using `ctx.get("confirmation_required", True)`. Keep `explain_code` raising `KeyError` for an absent key the chosen sentence needs. The D12 sentence stays word-for-word.
+2. `engine/allocate.py`: pass `confirmation_required=rules.retention_requires_confirmation` in `ctx` and always pass the real `retention_confirmed_at` (remove the `None`-when-not-required trick). Convert the `TypeError` from sorting by `applied_at` into the D14 `ValueError` (wrap `_sort_students`).
+3. Reproduce each defect first with a failing test, then fix: retained student confirmed with `retention_receipt_id=None` (explanation has no `None`); retained student confirmed with `retention_confirmed_at=None`, confirmation required and `retention_deadline=None` (sentence (b), not the "not required" sentence); `retention_requires_confirmation=False` (D12 sentence unchanged); one student with a timezone-aware `applied_at` among naive ones → `ValueError` from `allocate`.
+4. Template tests in `tests/test_engine.py` for the four variants, plus a sweep: for every outcome in the 40% and 30% fixture runs and in the rule-variant runs, `"None" not in explanation`.
+
+**Second executor turn** (prior-turn handoff context IS present): independently re-read the first turn's output, re-run the suite, then add whichever of these probes are not already covered by real assertions: (a) waitlist positions are exactly 1..n in `(applied_at, id)` order; (b) two students with identical `applied_at` are ordered by lower `id` first, in both the reserved and general pools; (c) `fresher_reservation_pct=100` with `reservation_base="total_beds"` never reserves more than `available_beds`; (d) every returning student confirmed on time (nothing available for freshers beyond vacated beds, no general pool) and zero students; (e) a RETURNING student with no `current_room_id` is a plain general-pool candidate with no retention code; (f) rooms are filled in `hostel.rooms` order and `PREFERENCE_UNAVAILABLE` appears only when a preference existed and was unmet. Any real defect a probe exposes gets fixed with a test. Commit.
+
 ## Acceptance
 
 - `.venv\Scripts\python.exe -m pytest tests/test_engine.py -q` passes from the repo root.

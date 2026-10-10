@@ -62,6 +62,10 @@ D11. **`confirm_retention`:**
 
 D12. **Confirmation not required.** If `retention_requires_confirmation` is false and a retained student has no confirmation, the `RETAINED_CONFIRMED` explanation uses the variant: "You kept room {room}. Retention confirmation was not required under the current rules." (Same code, no `None` leaks.)
 
+D13. **No `None` in prose; `RETAINED_CONFIRMED` variants.** Found in architect review of phase 2. `ctx` carries an optional boolean `confirmation_required` (default True when absent). `RETAINED_CONFIRMED` picks its sentence by this order: (a) `confirmation_required` is False → the D12 sentence; (b) `confirmed_at` is None → "You kept room {room}. Your retention confirmation is on record." plus " (receipt {receipt})" inside the sentence only if `receipt` is not None; (c) `receipt` is None → "You kept room {room}. You confirmed retention on {confirmed_at}."; (d) otherwise the CONTRACT wording. No explanation may ever contain the text `None`. `allocate` sets `confirmation_required` from `rules.retention_requires_confirmation` and always passes the real `confirmed_at` (D12's old trick of passing `None` for "not required" is replaced by the flag).
+
+D14. **Mixed naive/aware datetimes anywhere** (retention comparison, tiebreak sort) surface as `ValueError("mixed naive and timezone-aware datetimes")`, never a bare `TypeError`.
+
 ## 4. Explanation templates (`engine/explain.py`)
 
 Wording is CONTRACT section 5 verbatim. Date format `fmt_dt(dt)` = `dt.strftime("%d %b %Y %H:%M")`, e.g. `02 Jul 2026 10:14`. `base_label` = `"vacated beds"` or `"total beds"`. `{base}` is the numeric base from step 3. `{pct}` is the integer. Explanation of an outcome = the sentences for its `reason_codes`, in order, joined by one space.
