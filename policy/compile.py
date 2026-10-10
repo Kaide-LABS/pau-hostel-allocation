@@ -155,6 +155,7 @@ def _validate_payload(payload: dict[str, Any], text: str) -> tuple[Rules, list[s
     unmapped = _coerce_clause_list(payload.get("unmapped_clauses", []), "unmapped_clauses", text)
     ambiguities = _coerce_clause_list(payload.get("ambiguities", []), "ambiguities", text)
     defaults = _safe_default_rules()
+    rules_dict = _drop_null_values(rules_dict)
     merged = {**defaults.model_dump(mode="json"), **rules_dict}
     try:
         rules = Rules.model_validate(merged)
@@ -212,6 +213,10 @@ def _tokens(text: str) -> set[str]:
 
 def _normalise(text: str) -> str:
     return " ".join(text.split())
+
+
+def _drop_null_values(rules_dict: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in rules_dict.items() if value is not None}
 
 
 def _safe_default_rules() -> Rules:

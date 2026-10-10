@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import sys
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -154,6 +155,15 @@ def test_system_prompt_contains_unmapped_invariant_and_retention_guidance():
     assert "retention is automatic without confirmation" in prompt
 
 
+def test_system_prompt_contains_reservation_base_guidance():
+    prompt = build_system_prompt(Rules())
+
+    assert "available bed spaces as beds vacated by graduating or non-confirming students" in prompt
+    assert "set vacated_beds and must NOT be unmapped" in prompt
+    assert "base is all beds or total beds" in prompt
+    assert "ambiguous, not unmapped" in prompt
+
+
 def test_system_prompt_contains_worked_example_unmapped_sentence():
     prompt = build_system_prompt(Rules())
 
@@ -298,6 +308,31 @@ def test_omitted_fields_merge_from_defaults(monkeypatch):
     assert result.rules.fresher_reservation_pct == 30
     assert result.rules.reservation_base == load_default_rules().reservation_base
     assert result.rules.tiebreak == "applied_at"
+
+
+def test_null_retention_deadline_keeps_default(monkeypatch):
+    default_deadline = datetime.fromisoformat("2026-07-15T23:59:00")
+    default_rules = Rules(retention_deadline=default_deadline)
+    monkeypatch.setattr(compiler, "load_default_rules", lambda: default_rules)
+    install_fake(monkeypatch, [tool_response(payload({"retention_deadline": None}))])
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is False
+    assert result.rules.retention_deadline == default_deadline
+
+
+def test_non_null_retention_deadline_is_preserved(monkeypatch):
+    default_deadline = datetime.fromisoformat("2026-07-15T23:59:00")
+    emitted_deadline = "2026-08-01T12:00:00"
+    default_rules = Rules(retention_deadline=default_deadline)
+    monkeypatch.setattr(compiler, "load_default_rules", lambda: default_rules)
+    install_fake(monkeypatch, [tool_response(payload({"retention_deadline": emitted_deadline}))])
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is False
+    assert result.rules.retention_deadline == datetime.fromisoformat(emitted_deadline)
 
 
 @pytest.mark.parametrize(
