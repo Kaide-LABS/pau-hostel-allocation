@@ -30,6 +30,18 @@ All of PRD section 7 items 1-8, 11 and 12, through `shared.store` fixtures and f
 - `git diff` touches only `engine/` (not `engine/phases/`) and `tests/test_engine.py`.
 - If an expected number in PRD section 6 turns out to be wrong, STOP and report which side is wrong. Do not bend either side.
 
+## Carry-over from phase review
+
+Phase 1 review (explanations + retention) is accepted. Observations the allocator phase must honour:
+
+- **Test result observed:** `.venv\Scripts\python.exe -m pytest tests/test_engine.py -q` → `10 passed` from the repo root. Re-run and keep it green as allocation tests are added below the phase-2 marker.
+- **`build_explanation(codes, ctx)` is the one entry point for prose.** `allocate` must construct the `ctx` dict and call it; do not re-template any CONTRACT section 5 wording inside `allocate.py`. The templates and `REASON_CODES` order in `engine/explain.py` are frozen by phase 1 and verified verbatim against CONTRACT section 5.
+- **`explain_code` key contract (verified by hand):** a placeholder key that is present but `None` triggers the D12 `RETAINED_CONFIRMED` variant; a key that is *absent* raises `KeyError`. So when building the retained-student `ctx`, pass `confirmed_at=None` explicitly for the "confirmation not required" case (D12) — never omit the key, or the engine will raise instead of producing the variant sentence.
+- **`confirm_retention` idempotency is intentional and relied upon:** an already-confirmed student with a receipt is returned unchanged (original timestamp preserved). `allocate`'s step-1 retention check (D4) reads `retention_confirmed` / `retention_confirmed_at` as-is and must not call `confirm_retention` or otherwise re-stamp timestamps.
+- **Receipt format** is `RET-{HOSTEL}-{hex6}` matching `^RET-[A-Z0-9]+-[0-9a-f]{6}$`, `HOSTEL` falling back to `"HOSTEL"` on any `load_hostel()` exception. Allocation does not issue receipts; it only surfaces an existing `retention_receipt_id` in the `RETAINED_CONFIRMED` explanation `ctx` as `receipt`.
+- **Accepted minor notes (non-blocking, no change required):** `explain_code` reads `ctx["confirmed_at"]` for every `RETAINED_CONFIRMED` call including the normal path; this is correct and is what enforces the absent-key `KeyError`. `_placeholder_names` returns an unordered set, which is harmless because templates use only named fields.
+- **Decision the next phase must honour:** reason-code ordering is D6 (retention-loss code → pool outcome → `PREFERENCE_UNAVAILABLE`), and `REASON_CODES` in `explain.py` is the canonical validation set — every outcome's `reason_codes` must be a subset of it, in D6 order.
+
 ## Reviewer's own responsibility
 
 This is the last build phase, but it is NOT run as `is_final_phase` (a final phase would have the reviewer commit `BUILD_COMPLETE.md` at the repo root, which is owner territory). Instead the reviewer genuinely writes and commits `engine/phases/PHASE_3_SPEC.md`: a short closing record with the section `## Carry-over from phase review` (observed test result, accepted minor notes, remaining risks) and the line "No further build work in this folder." Commit only that file.
