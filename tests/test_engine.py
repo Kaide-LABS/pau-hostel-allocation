@@ -25,7 +25,7 @@ def test_template_exactness_for_every_reason_code() -> None:
         "reserved": 5,
         "pct": 40,
         "base": 14,
-        "base_label": "vacated beds",
+        "base_label": "available beds",
         "general": 9,
         "applied_at": datetime(2026, 6, 11, 14, 5),
         "pos": 3,
@@ -35,7 +35,7 @@ def test_template_exactness_for_every_reason_code() -> None:
         "RETAINED_CONFIRMED": "You kept room A101. You confirmed retention on 02 Jul 2026 10:14 (receipt RET-PALM-3f9a1c).",
         "RETENTION_NOT_CONFIRMED": "Your room was released because no retention confirmation was recorded.",
         "RETENTION_AFTER_DEADLINE": "Your confirmation on 02 Jul 2026 10:14 came after the deadline of 15 Jul 2026 23:59.",
-        "FRESHER_RESERVED_SEAT": "You received one of 5 seats reserved for new students (40% of 14 vacated beds).",
+        "FRESHER_RESERVED_SEAT": "You received one of 5 seats reserved for new students (40% of 14 available beds).",
         "FRESHER_RESERVATION_FULL": "All 5 seats reserved for new students were filled. You are #3 on the waitlist.",
         "NO_OFFER_LETTER": "Reserved seats require a valid Offer of Provisional Admission letter, and none is on record.",
         "GENERAL_POOL_ALLOCATED": "You were allocated from the 9 general beds, in application order (applied 11 Jun 2026 14:05).",
@@ -92,7 +92,7 @@ def test_datetime_format_unknown_code_missing_key_empty_codes_and_joining() -> N
         "reserved": 5,
         "pct": 40,
         "base": 14,
-        "base_label": "vacated beds",
+        "base_label": "available beds",
         "pos": 2,
     }
 
@@ -100,7 +100,7 @@ def test_datetime_format_unknown_code_missing_key_empty_codes_and_joining() -> N
     assert build_explanation(
         ["FRESHER_RESERVED_SEAT", "FRESHER_RESERVATION_FULL"], ctx
     ) == (
-        "You received one of 5 seats reserved for new students (40% of 14 vacated beds). "
+        "You received one of 5 seats reserved for new students (40% of 14 available beds). "
         "All 5 seats reserved for new students were filled. You are #2 on the waitlist."
     )
     with pytest.raises(ValueError):

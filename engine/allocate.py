@@ -38,7 +38,7 @@ def allocate(hostel: Hostel, students: list[Student], rules: Rules, now: datetim
     available_beds = total_beds - len(retained)
     base = available_beds if rules.reservation_base == "vacated_beds" else total_beds
     reserved = min((rules.fresher_reservation_pct * base) // 100, available_beds)
-    base_label = "vacated beds" if rules.reservation_base == "vacated_beds" else "total beds"
+    base_label = "available beds" if rules.reservation_base == "vacated_beds" else "total beds"
 
     freshers = [student for student in students if student.category is StudentCategory.FRESHER]
     eligible_freshers: list[Student] = []
