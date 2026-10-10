@@ -55,28 +55,54 @@ html, body, [class*="css"] { font-size: 18px; }
 .block-container { padding-top: 2rem; }
 [data-testid="stMetric"] {
     border: 1px solid #d0d7de;
+    border-left: 0.4rem solid #1F3A5F;
     border-radius: 8px;
-    padding: 0.8rem 0.9rem;
+    padding: 0.8rem 1rem;
     background: #ffffff;
+    color: #111827;
 }
-[data-testid="stMetricValue"] { font-size: 2.6rem; }
-[data-testid="stMetricLabel"] { font-size: 1rem; }
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] * {
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: #111827;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+}
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * {
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #4B5563;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+}
+.st-key-m_retained [data-testid="stMetric"],
+.st-key-m_fresher [data-testid="stMetric"],
+.st-key-m_general [data-testid="stMetric"] { border-left-color: #15803D; }
+.st-key-m_waitlisted [data-testid="stMetric"] { border-left-color: #B45309; }
+.st-key-m_rejected [data-testid="stMetric"] { border-left-color: #B91C1C; }
 .student-card, .explanation-box {
     border: 1px solid #d0d7de;
     border-radius: 8px;
     padding: 1rem;
     background: #ffffff;
+    color: #111827;
     margin: 0.75rem 0;
 }
 .audit-pass {
     border-left: 0.45rem solid #1a7f37;
     background: #dafbe1;
+    color: #111827;
     padding: 0.8rem 1rem;
     margin-bottom: 0.75rem;
 }
 .audit-fail {
     border-left: 0.45rem solid #cf222e;
     background: #ffebe9;
+    color: #111827;
     padding: 0.8rem 1rem;
     margin-bottom: 0.75rem;
 }
@@ -242,18 +268,24 @@ def _render_result(result: AllocationResult) -> None:
     if st.session_state.get("run_rules") != st.session_state.rules:
         st.caption("Results are from the previous run; run again to update.")
     summary = result.summary
-    labels = [
-        ("Total beds", summary.total_beds),
-        ("Retained", summary.retained),
-        ("Available", summary.available_beds),
-        ("Reserved for new students", summary.reserved_for_freshers),
-        ("New students allocated", summary.freshers_allocated),
-        ("General allocated", summary.general_allocated),
-        ("Waitlisted", summary.waitlisted),
+    rows = [
+        [
+            ("total", "Total beds", summary.total_beds),
+            ("retained", "Retained", summary.retained),
+            ("available", "Available", summary.available_beds),
+            ("reserved", "Reserved for new students", summary.reserved_for_freshers),
+        ],
+        [
+            ("fresher", "New students allocated", summary.freshers_allocated),
+            ("general", "General pool allocated", summary.general_allocated),
+            ("waitlisted", "Waitlisted", summary.waitlisted),
+            ("rejected", "Rejected", summary.rejected),
+        ],
     ]
-    for col, (label, value) in zip(st.columns(7), labels):
-        col.metric(label, value)
-    st.caption(f"Rejected: {summary.rejected}")
+    for row in rows:
+        for col, (key, label, value) in zip(st.columns(4), row):
+            with col, st.container(key=f"m_{key}"):
+                st.metric(label, value)
     st.write(view.reserved_sentence(summary, result.rules))
     statuses = st.multiselect(
         "Show",

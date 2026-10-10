@@ -639,10 +639,11 @@ def test_streamlit_wiring_with_real_engine_and_naive_fixtures(monkeypatch: pytes
     assert not at.exception
     assert not at.error
     assert not any("Allocation failed" in item.value for item in at.error)
-    assert len(at.metric) == 7
+    assert len(at.metric) == 8
     metrics = {item.label: item.value for item in at.metric}
     assert metrics["Total beds"] == "24"
     assert metrics["Retained"] == "10"
+    assert metrics["Rejected"] == "2"
     assert at.session_state.result.summary.total_beds == 24
     assert at.session_state.result.summary.retained == 10
     audit_boxes = [item.value for item in at.markdown if 'class="audit-' in item.value]

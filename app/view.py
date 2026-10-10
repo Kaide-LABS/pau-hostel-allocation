@@ -68,7 +68,7 @@ def status_pill_html(status: OutcomeStatus | str) -> str:
 
 
 def tag_html(text: str) -> str:
-    return f'<span style="border:1px solid #d0d7de;border-radius:999px;padding:0.1rem 0.45rem;margin-right:0.25rem;">{escape(str(text), quote=True)}</span>'
+    return f'<span style="border:1px solid #d0d7de;border-radius:999px;padding:0.1rem 0.45rem;margin-right:0.25rem;background:#ffffff;color:#111827;">{escape(str(text), quote=True)}</span>'
 
 
 def base_label(rules: Rules) -> str:
