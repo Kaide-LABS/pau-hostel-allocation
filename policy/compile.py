@@ -39,7 +39,7 @@ def compile_policy(text: str) -> CompileResult:
     try:
         return _compile(text)
     except Exception as exc:
-        return _fallback(text, f"unexpected error: {type(exc).__name__}: {exc}")
+        return _fallback(text, f"unexpected error: {_exc_text(exc)}")
 
 
 def _compile(text: str) -> CompileResult:
@@ -162,7 +162,20 @@ def _validate_payload(payload: dict[str, Any], text: str) -> tuple[Rules, list[s
     except ValidationError as exc:
         raise _InvalidOutput(str(exc)) from exc
     rules = rules.model_copy(update={"source_text": text})
+    rules = _naive_deadline(rules)
     return rules, unmapped, ambiguities
+
+
+def _naive_deadline(rules: Rules) -> Rules:
+    """Drop tzinfo from a timezone-aware retention_deadline, keeping the wall-clock time as written.
+
+    The fixtures and the allocator use naive datetimes; an aware deadline would make
+    engine.allocate raise on comparison. The time is NOT shifted between zones.
+    """
+    deadline = rules.retention_deadline
+    if deadline is not None and deadline.tzinfo is not None:
+        return rules.model_copy(update={"retention_deadline": deadline.replace(tzinfo=None)})
+    return rules
 
 
 def _coerce_clause_list(value: Any, label: str, text: str) -> list[str]:
@@ -238,13 +251,32 @@ def _fallback(text: Any, error: str) -> CompileResult:
             error=_safe_error(error or "unknown error"),
         )
     except Exception as exc:
-        return CompileResult(
-            rules=Rules(source_text=source_text),
-            unmapped_clauses=[],
-            ambiguities=[],
-            used_fallback=True,
-            error=_safe_error(f"fallback failed: {type(exc).__name__}: {exc}"),
-        )
+        try:
+            return CompileResult(
+                rules=Rules(source_text=source_text),
+                unmapped_clauses=[],
+                ambiguities=[],
+                used_fallback=True,
+                error=_safe_error(f"fallback failed: {_exc_text(exc)}"),
+            )
+        except Exception:
+            return CompileResult(
+                rules=Rules(),
+                used_fallback=True,
+                error="fallback failed",
+            )
+
+
+def _exc_text(exc: BaseException) -> str:
+    """Format `Type: message` without ever raising, even if the exception's __str__ does."""
+    try:
+        name = type(exc).__name__
+    except Exception:
+        name = "Exception"
+    try:
+        return f"{name}: {exc}"
+    except Exception:
+        return name
 
 
 def _redact(message: str, api_key: str | None) -> str:
@@ -263,7 +295,7 @@ def _safe_error(message: str) -> str:
 
 
 def _api_error(exc: BaseException, api_key: str) -> str:
-    return _redact(f"Anthropic API call failed: {type(exc).__name__}: {exc}", api_key)
+    return _redact(f"Anthropic API call failed: {_exc_text(exc)}", api_key)
 
 
 def _api_exceptions() -> tuple[type[BaseException], ...]:

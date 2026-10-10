@@ -27,7 +27,7 @@ def build_system_prompt(defaults: Rules) -> str:
         "fresher_requires_offer_letter is true when an offer/admission letter is required; "
         "retention_requires_confirmation is true for sentences like 'returning students who confirm retention keep their rooms' "
         "or 'students must confirm to keep their rooms'; false only if retention is automatic without confirmation; "
-        "retention_deadline is ISO-8601 date-time only if a date is stated, otherwise copy default; "
+        "retention_deadline is ISO-8601 date-time only if a date is stated, otherwise copy default; emit the date-time WITHOUT any timezone suffix (no Z, no offset); "
         "unused_reservation_released controls whether unused reserved seats move to general pool; "
         "freshers_may_compete_for_general_pool stays default when unclear; tiebreak is always applied_at; "
         "source_text stays the default empty string because the caller fills it. "

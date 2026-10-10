@@ -193,7 +193,12 @@ def test_invalid_output_then_valid_retries_once(monkeypatch):
     assert result.used_fallback is False
     assert result.rules.fresher_reservation_pct == 30
     assert len(client.messages.calls) == 2
-    assert "previous emit_rules output was rejected" in client.messages.calls[1]["messages"][0]["content"]
+    retry_content = client.messages.calls[1]["messages"][0]["content"]
+    assert "previous emit_rules output was rejected" in retry_content
+    # The actual first validation error (Pydantic's message for the bad field) must be echoed back.
+    assert "fresher_reservation_pct" in retry_content
+    assert "Input should be less than or equal to 100" in retry_content
+    assert "input_value=140" in retry_content
 
 
 def test_invalid_then_invalid_falls_back(monkeypatch):
@@ -463,31 +468,41 @@ def test_key_in_validation_error_never_reaches_error(monkeypatch):
     assert secret not in result.model_dump_json()
 
 
-def _allocate_with(monkeypatch, text, pct):
+def _require_fixtures():
     allocate_module = pytest.importorskip("engine.allocate")
-    if not (ROOT / "data" / "hostel.json").exists():
-        pytest.skip("data/hostel.json is missing")
+    for name in ("hostel.json", "students.json", "default_rules.json"):
+        if not (ROOT / "data" / name).exists():
+            pytest.skip(f"data/{name} is missing")
+    return allocate_module
+
+
+def _allocate_with(monkeypatch, text, rules_payload):
+    """Mock-compile `text` with `rules_payload`, then run the real allocator over the read-only fixtures."""
+    allocate_module = _require_fixtures()
     from shared.store import load_hostel, load_students
 
-    # retention_deadline null: the compiler must keep the default deadline from load_default_rules().
-    install_fake(
-        monkeypatch,
-        [tool_response(payload({"fresher_reservation_pct": pct, "retention_deadline": None}))],
-    )
+    install_fake(monkeypatch, [tool_response(payload(rules_payload))])
     compiled = compiler.compile_policy(text)
-    assert compiled.used_fallback is False
-    assert compiled.rules.fresher_reservation_pct == pct
-    assert compiled.rules.retention_deadline == load_default_rules().retention_deadline
-    assert compiled.rules.retention_deadline is not None
-
-    return allocate_module.allocate(
+    assert compiled.used_fallback is False, compiled.error
+    result = allocate_module.allocate(
         load_hostel(), load_students(), compiled.rules, datetime(2026, 7, 20, 12, 0)
     )
+    return compiled, result
 
 
 def test_compiled_rules_drive_allocation_forty_vs_thirty(monkeypatch):
-    forty = _allocate_with(monkeypatch, SAMPLE_POLICY, 40)
-    thirty = _allocate_with(monkeypatch, SAMPLE_POLICY.replace("40%", "30%"), 30)
+    # retention_deadline null: the compiler must keep the default deadline from load_default_rules().
+    forty_compiled, forty = _allocate_with(
+        monkeypatch, SAMPLE_POLICY, {"fresher_reservation_pct": 40, "retention_deadline": None}
+    )
+    thirty_compiled, thirty = _allocate_with(
+        monkeypatch,
+        SAMPLE_POLICY.replace("40%", "30%"),
+        {"fresher_reservation_pct": 30, "retention_deadline": None},
+    )
+    for compiled in (forty_compiled, thirty_compiled):
+        assert compiled.rules.retention_deadline == load_default_rules().retention_deadline
+        assert compiled.rules.retention_deadline is not None
 
     for result, pct in ((forty, 40), (thirty, 30)):
         summary = result.summary
@@ -504,3 +519,241 @@ def test_compiled_rules_drive_allocation_forty_vs_thirty(monkeypatch):
         if code == "RETENTION_AFTER_DEADLINE"
     ]
     assert late_codes, "default retention deadline should flag the late confirmation in the 40% run"
+
+
+# --- A. timezone-aware retention_deadline is normalised to a naive wall-clock datetime ---
+
+
+@pytest.mark.parametrize(
+    "emitted",
+    ["2026-08-01T12:00:00Z", "2026-08-01T12:00:00+01:00", "2026-08-01T12:00:00-05:30"],
+)
+def test_tz_aware_deadline_becomes_naive_wall_clock(monkeypatch, emitted):
+    install_fake(monkeypatch, [tool_response(payload({"retention_deadline": emitted}))])
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is False
+    assert result.rules.retention_deadline == datetime(2026, 8, 1, 12, 0)
+    assert result.rules.retention_deadline.tzinfo is None
+
+
+def test_naive_deadline_is_untouched(monkeypatch):
+    install_fake(monkeypatch, [tool_response(payload({"retention_deadline": "2026-08-01T12:00:00"}))])
+    result = compiler.compile_policy(SAMPLE_POLICY)
+    assert result.rules.retention_deadline == datetime(2026, 8, 1, 12, 0)
+
+
+def test_system_prompt_forbids_timezone_suffix():
+    assert "WITHOUT any timezone suffix (no Z, no offset)" in build_system_prompt(Rules())
+
+
+@pytest.mark.parametrize("emitted", ["2026-07-15T23:59:00Z", "2026-07-15T23:59:00+01:00"])
+def test_tz_aware_deadline_runs_through_allocator_without_raising(monkeypatch, emitted):
+    compiled, result = _allocate_with(monkeypatch, SAMPLE_POLICY, {"retention_deadline": emitted})
+
+    assert compiled.rules.retention_deadline == datetime(2026, 7, 15, 23, 59)
+    assert compiled.rules.retention_deadline.tzinfo is None
+    assert result.summary.total_beds > 0
+
+
+# --- B. an exception whose __str__ raises must never escape ---
+
+
+class BadStrError(Exception):
+    def __str__(self):
+        raise ValueError("str() exploded")
+
+
+class BadStrOSError(OSError):
+    def __str__(self):
+        raise ValueError("str() exploded")
+
+
+@pytest.mark.parametrize("exc_type", [BadStrError, BadStrOSError])
+def test_exception_with_raising_str_still_falls_back(monkeypatch, exc_type):
+    client = install_fake(monkeypatch, [exc_type()])
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert isinstance(result, CompileResult)
+    assert result.used_fallback is True
+    assert len(client.messages.calls) == 1
+    assert exc_type.__name__ in result.error
+
+
+def test_fallback_survives_default_rules_raising_bad_str_exception(monkeypatch):
+    def boom():
+        raise BadStrError()
+
+    monkeypatch.setattr(compiler, "load_default_rules", boom)
+    result = compiler.compile_policy(SAMPLE_POLICY)
+    assert result.used_fallback is True
+    assert result.rules == Rules(source_text=SAMPLE_POLICY)
+
+
+# --- C1. real anthropic exception types take the specific API-error path ---
+
+
+def _real_request():
+    httpx = pytest.importorskip("httpx2")  # the SDK pinned here builds its exceptions on httpx2
+    return httpx, httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+
+
+def test_real_api_connection_error_uses_api_error_path_and_redacts_key(monkeypatch):
+    anthropic = pytest.importorskip("anthropic")
+    _, request = _real_request()
+    secret = "sk-ant-test-0123456789-secret"
+    error = anthropic.APIConnectionError(message=f"Connection error for {secret}", request=request)
+    client = install_fake(monkeypatch, [error], key=secret)
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    assert len(client.messages.calls) == 1
+    assert result.error.startswith("Anthropic API call failed: APIConnectionError: ")
+    assert secret not in result.error
+    assert "***" in result.error
+
+
+def test_real_authentication_error_uses_api_error_path_and_redacts_key(monkeypatch):
+    anthropic = pytest.importorskip("anthropic")
+    httpx, request = _real_request()
+    secret = "sk-ant-test-0123456789-secret"
+    error = anthropic.AuthenticationError(
+        f"invalid x-api-key {secret}",
+        response=httpx.Response(401, request=request),
+        body=None,
+    )
+    client = install_fake(monkeypatch, [error], key=secret)
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    assert len(client.messages.calls) == 1
+    assert result.error.startswith("Anthropic API call failed: AuthenticationError: ")
+    assert secret not in result.error
+    assert "***" in result.error
+
+
+# --- C2. the key straddles the 500-character truncation boundary ---
+
+_STRADDLE_KEY = "sk-ant-test-0123456789-secret"
+
+
+def _assert_no_key_prefix(error, key):
+    for n in range(7, len(key) + 1):
+        assert key[:n] not in error, f"key prefix of length {n} leaked: {error[-60:]!r}"
+
+
+def test_key_straddling_truncation_boundary_is_redacted_in_api_error(monkeypatch):
+    prefix = "Anthropic API call failed: OSError: "
+    filler = "x" * (500 - len(prefix) - 10)  # the key starts 10 characters before the cut
+    install_fake(monkeypatch, [OSError(filler + _STRADDLE_KEY)], key=_STRADDLE_KEY)
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    _assert_no_key_prefix(result.error, _STRADDLE_KEY)
+    assert len(result.error) <= 500
+
+
+def test_key_straddling_truncation_boundary_is_redacted_in_catch_all(monkeypatch):
+    prefix = "unexpected error: RuntimeError: "
+    filler = "x" * (500 - len(prefix) - 10)
+    install_fake(monkeypatch, [RuntimeError(filler + _STRADDLE_KEY)], key=_STRADDLE_KEY)
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    _assert_no_key_prefix(result.error, _STRADDLE_KEY)
+
+
+def test_key_straddling_truncation_boundary_is_redacted_in_validation_error(monkeypatch):
+    prefix = "model output failed validation after retry: unmapped_clauses entry was not copied verbatim: "
+    filler = "x" * (500 - len(prefix) - 10)
+    bad = tool_response(payload(unmapped=[filler + _STRADDLE_KEY]))
+    client = install_fake(monkeypatch, [bad, bad], key=_STRADDLE_KEY)
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    assert len(client.messages.calls) == 2
+    assert result.error.startswith("model output failed validation after retry")
+    _assert_no_key_prefix(result.error, _STRADDLE_KEY)
+
+
+# --- C3. a key sourced from .env (not the environment) is redacted too ---
+
+
+@pytest.mark.parametrize("exc_type", [OSError, RuntimeError])
+def test_dotenv_sourced_key_is_redacted(monkeypatch, tmp_path, exc_type):
+    secret = "sk-ant-dotenv-9876543210-secret"
+    env_file = tmp_path / ".env"
+    env_file.write_text(f'ANTHROPIC_API_KEY="{secret}"\n', encoding="utf-8")
+    monkeypatch.setattr(compiler, "_DOTENV_PATH", env_file)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    client = FakeClient([exc_type(f"leaky message with {secret}")])
+    monkeypatch.setattr(compiler, "_make_client", lambda api_key: client)
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    assert len(client.messages.calls) == 1
+    assert secret not in result.error
+    assert "***" in result.error
+
+
+# --- C4. only a tool_use block named emit_rules is accepted ---
+
+
+def test_tool_use_block_with_other_name_is_invalid(monkeypatch):
+    wrong = SimpleNamespace(
+        content=[
+            SimpleNamespace(type="text", text="thinking out loud"),
+            SimpleNamespace(
+                type="tool_use",
+                name="other_tool",
+                input=payload({"fresher_reservation_pct": 25}),
+            ),
+        ],
+        stop_reason="tool_use",
+    )
+    client = install_fake(monkeypatch, [wrong, wrong])
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    assert len(client.messages.calls) == 2
+    assert result.rules.fresher_reservation_pct == load_default_rules().fresher_reservation_pct
+
+
+def test_text_block_before_emit_rules_block_is_accepted(monkeypatch):
+    response = SimpleNamespace(
+        content=[
+            SimpleNamespace(type="text", text="here you go"),
+            SimpleNamespace(
+                type="tool_use",
+                name="emit_rules",
+                input=payload({"fresher_reservation_pct": 30}),
+            ),
+        ],
+        stop_reason="tool_use",
+    )
+    client = install_fake(monkeypatch, [response])
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is False
+    assert result.rules.fresher_reservation_pct == 30
+    assert len(client.messages.calls) == 1
+
+
+# --- C5. BaseException subclasses outside Exception propagate ---
+
+
+@pytest.mark.parametrize("exc", [KeyboardInterrupt(), SystemExit(1)])
+def test_keyboard_interrupt_and_system_exit_propagate(monkeypatch, exc):
+    install_fake(monkeypatch, [exc])
+    with pytest.raises(type(exc)):
+        compiler.compile_policy(SAMPLE_POLICY)
