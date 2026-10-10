@@ -331,7 +331,7 @@ def test_reserved_sentence_updates_after_policy_change(monkeypatch: pytest.Monke
     at.button(key="run_allocation").click().run()
     text_30 = " ".join(item.value for item in at.markdown)
     assert "30% of" in text_30
-    assert "40% of" not in text_30
+    assert "(40% of" not in text_30
 
 
 def test_safe_call_message_paths(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -67,6 +67,28 @@ def status_pill_html(status: OutcomeStatus | str) -> str:
     return f'<span style="color:{style["color"]};background:{style["background"]};padding:0.2rem 0.55rem;border-radius:999px;font-weight:700;">{escape(status_label(value))}</span>'
 
 
+RESULT_COLOR = {
+    OutcomeStatus.ALLOCATED.value: "#15803D",
+    OutcomeStatus.WAITLISTED.value: "#B45309",
+    OutcomeStatus.REJECTED.value: "#B91C1C",
+}
+
+
+def result_status_html(status: OutcomeStatus | str) -> str:
+    value = status.value if isinstance(status, OutcomeStatus) else str(status).lower()
+    color = RESULT_COLOR[value]
+    return f'<div style="font-size:2.2rem;font-weight:800;line-height:1.2;color:{color};background:#ffffff;">{escape(status_label(value))}</div>'
+
+
+def source_pill_html(use_mock: bool) -> str:
+    label, color, background = ("Mock data", "#374151", "#E5E7EB") if use_mock else ("Live engine", "#14532D", "#DCFCE7")
+    return (
+        '<div style="text-align:right;">'
+        f'<span style="color:{color};background:{background};padding:0.25rem 0.75rem;border-radius:999px;font-weight:700;font-size:0.85rem;">{label}</span>'
+        '</div>'
+    )
+
+
 def tag_html(text: str) -> str:
     return f'<span style="border:1px solid #d0d7de;border-radius:999px;padding:0.1rem 0.45rem;margin-right:0.25rem;background:#ffffff;color:#111827;">{escape(str(text), quote=True)}</span>'
 

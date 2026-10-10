@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -84,6 +85,26 @@ html, body, [class*="css"] { font-size: 18px; }
 .st-key-m_general [data-testid="stMetric"] { border-left-color: #15803D; }
 .st-key-m_waitlisted [data-testid="stMetric"] { border-left-color: #B45309; }
 .st-key-m_rejected [data-testid="stMetric"] { border-left-color: #B91C1C; }
+.step-card {
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 1rem;
+    background: #F3F5F8;
+    color: #111827;
+    height: 100%;
+}
+.step-num {
+    display: inline-block;
+    width: 1.8rem;
+    height: 1.8rem;
+    line-height: 1.8rem;
+    text-align: center;
+    border-radius: 50%;
+    background: #1F3A5F;
+    color: #ffffff;
+    font-weight: 700;
+}
+.step-title { font-weight: 700; font-size: 1.1rem; margin: 0.4rem 0 0.25rem 0; color: #111827; }
 .student-card, .explanation-box {
     border: 1px solid #d0d7de;
     border-radius: 8px;
@@ -125,6 +146,7 @@ def init_state() -> bool:
 
     st.session_state.state_ready = False
     st.session_state.compile_result = None
+    st.session_state.compile_seconds = None
     st.session_state.result = None
     st.session_state.run_students = []
     st.session_state.policy_text = SAMPLE_POLICY
@@ -174,17 +196,18 @@ def _format_dt(value: datetime | None) -> str:
 def _render_student_result(student: Student) -> None:
     result = st.session_state.result
     if result is None:
-        st.info("No allocation has been run yet. Ask the hostel manager to run it.")
+        st.info("No allocation has been run yet. The hostel manager runs it from the Hostel manager tab.")
         return
     outcome = _outcome_by_student(result).get(student.id)
     if outcome is None:
         st.warning("No outcome recorded for this student in the latest run.")
         return
-    st.markdown(view.status_pill_html(outcome.status), unsafe_allow_html=True)
+    st.markdown(view.result_status_html(outcome.status), unsafe_allow_html=True)
     if outcome.room_id:
-        st.write(f"Room: {outcome.room_id}")
+        st.write(f"Room {outcome.room_id}")
     elif outcome.waitlist_position:
-        st.write(f"Waitlist: #{outcome.waitlist_position} on the waitlist")
+        st.write(f"Waitlist position #{outcome.waitlist_position}")
+    st.markdown("#### Why")
     st.markdown(view.explanation_box_html(outcome.explanation), unsafe_allow_html=True)
     st.markdown(" ".join(view.tag_html(code) for code in outcome.reason_codes), unsafe_allow_html=True)
     if view.find_placeholders(outcome.explanation):
@@ -196,6 +219,10 @@ def _render_student_result(student: Student) -> None:
 
 
 def render_student_tab() -> None:
+    st.write(
+        "Returning students: confirm you're keeping your room before the deadline and get a receipt. "
+        "Everyone: check your result and the reason behind it."
+    )
     selected_label = st.selectbox(
         "Student",
         _student_options(st.session_state.students),
@@ -218,6 +245,8 @@ def render_student_tab() -> None:
     retention = "confirmed" if student.retention_confirmed else "not confirmed"
     st.markdown(view.student_card_html(student, retention), unsafe_allow_html=True)
     deadline = st.session_state.rules.retention_deadline
+    if deadline is not None:
+        st.caption(f"Confirmation deadline: {deadline.strftime('%d %b %Y, %H:%M')}")
     if student.category == StudentCategory.RETURNING and not student.retention_confirmed:
         late_text = view.late_warning_text(view.now_like(deadline), deadline, _format_dt)
         if late_text:
@@ -228,7 +257,10 @@ def render_student_tab() -> None:
         st.button("Confirm I'm keeping my room", key="confirm_retention", disabled=True)
         st.caption("Only current residents confirm retention.")
     elif student.retention_confirmed:
-        st.success(f"Receipt {receipt} recorded at {_format_dt(student.retention_confirmed_at)}.")
+        st.success(
+            f"Room kept. Receipt {receipt}, recorded {_format_dt(student.retention_confirmed_at)}. "
+            "Keep this receipt as proof of confirmation."
+        )
     elif st.button("Confirm I'm keeping my room", key="confirm_retention"):
         call_now = view.now_like(st.session_state.rules.retention_deadline)
         updated, error = safe_call("Could not record your confirmation. Please try again.", confirm_retention, student, call_now)
@@ -237,7 +269,10 @@ def render_student_tab() -> None:
         else:
             st.session_state.students = [updated if item.id == updated.id else item for item in st.session_state.students]
             st.session_state.last_receipt[updated.id] = updated.retention_receipt_id
-            st.success(f"Receipt {updated.retention_receipt_id} recorded at {_format_dt(updated.retention_confirmed_at)}.")
+            st.success(
+                f"Room kept. Receipt {updated.retention_receipt_id}, recorded {_format_dt(updated.retention_confirmed_at)}. "
+                "Keep this receipt as proof of confirmation."
+            )
             student = updated
 
     st.subheader("My result")
@@ -245,16 +280,35 @@ def render_student_tab() -> None:
 
 
 def _render_compile_result(result: CompileResult) -> None:
+    rows = view.rules_rows(result.rules)
     if result.used_fallback:
         suffix = f": {result.error}" if result.error else ""
-        st.warning(f"Fallback rules in use: the compiler could not process this policy{suffix}")
+        st.warning(
+            f"Fallback rules in use: the compiler could not process this policy{suffix}. "
+            "The app is using the published default rules, so allocation still works."
+        )
     elif result.error:
         st.error(result.error)
+    elif USE_MOCK:
+        st.success("Mock compile: no API call was made.")
+    else:
+        model = os.getenv("ANTHROPIC_MODEL") or "claude-haiku-5-5"
+        seconds = st.session_state.get("compile_seconds")
+        timing = f" in {seconds:.1f} s" if seconds is not None else ""
+        st.success(
+            f"Read live by Claude ({model}){timing}. {len(rows)} rules extracted, "
+            f"{len(result.ambiguities)} ambiguities, {len(result.unmapped_clauses)} unmapped clauses."
+        )
+    st.subheader("How the policy was read")
+    if result.ambiguities:
+        st.markdown("**Needs a human decision**")
     for item in result.ambiguities:
         st.warning(f"Could be read more than one way: {item}")
+    if result.unmapped_clauses:
+        st.markdown("**Not covered by the rules engine**")
     for item in result.unmapped_clauses:
         st.error(f"Not mapped to any rule: {item}")
-    st.table(pd.DataFrame(view.rules_rows(result.rules), columns=["Rule", "Value"]))
+    st.table(pd.DataFrame(rows, columns=["Rule", "Value"]))
     with st.expander("Compiled source text"):
         st.write(result.rules.source_text)
 
@@ -312,12 +366,15 @@ def _render_result(result: AllocationResult) -> None:
 
 
 def render_manager_tab() -> None:
-    text = st.text_area("Policy", key="policy_text", height=200)
+    st.write("Paste the hostel's policy, check how it was read, then run the allocation.")
+    text = st.text_area("Hostel policy (plain English)", key="policy_text", height=200)
     if st.button("Compile policy", key="compile_policy"):
         if not text.strip():
             st.warning("Paste the policy text first.")
         else:
+            started = time.perf_counter()
             result, error = safe_call("Policy compiler failed unexpectedly.", compile_policy, text)
+            st.session_state.compile_seconds = time.perf_counter() - started
             if error:
                 st.error(error)
             else:
@@ -367,9 +424,24 @@ if REAL_IMPORT_ERROR:
     st.error(f"Real engine or compiler not available yet: {REAL_IMPORT_ERROR}. Set USE_MOCK=1 or wait for the merge.")
     st.stop()
 
-st.title("Hostel Room Allocation")
-st.write("A fair, auditable way for hostels to run allocation under the published policy.")
-st.caption(f"Data source: {'mock' if USE_MOCK else 'live engine'}")
+STEPS = [
+    ("1", "Policy in", "The manager pastes the hostel policy in plain English. Claude converts it into structured rules and flags anything vague instead of guessing."),
+    ("2", "Rules applied", "A deterministic engine applies the same rules to every student: on-time returners keep their rooms, up to 40% of available beds go to new students with offer letters, and the rest are allocated by application time."),
+    ("3", "Every result explained", "Each student sees exactly why they got a room or a waitlist place, and Student Affairs can audit the whole run."),
+]
+
+head_left, head_right = st.columns([5, 1])
+with head_left:
+    st.title("PAU Hostel Allocation Engine")
+    st.write("Fair, explainable bed allocation under the published hostel policy.")
+with head_right:
+    st.markdown(view.source_pill_html(USE_MOCK), unsafe_allow_html=True)
+st.markdown("**The AI reads the policy. It never decides who gets a room.**")
+for step_col, (number, title, sentence) in zip(st.columns(3), STEPS):
+    step_col.markdown(
+        f'<div class="step-card"><div class="step-num">{number}</div><div class="step-title">{title}</div><div>{sentence}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 ready = init_state()
 tabs = st.tabs(["Student", "Hostel manager", "Student Affairs audit"])
