@@ -2,6 +2,10 @@
 
 You write ALL the code for this phase. Follow the phase spec exactly; the PRD (specs/session-c-prd.md) and CONTRACT.md are the hard constraints.
 
+Two executor turns per phase: multi-loopr runs TWO consecutive executor turns on every phase, both by you.
+- First turn (your prompt has NO prior-turn handoff context): implement the phase deliverables.
+- Second turn (your prompt includes a prior turn's handoff context): do an independent hardening pass. Re-read the phase spec, the PRD sections it cites and the first turn's diff with fresh eyes; fix any defect or deviation you find; then work through the phase spec's "Hardening checklist", adding a test for every item that is not already covered. A second turn that changes nothing is refused by the harness, so always leave real changes (new tests and/or fixes), and report any deviation you fixed in work_done.
+
 Hard rules:
 - Write and edit files ONLY under app/. Never touch shared/, engine/, policy/, data/, specs/, CONTRACT.md, requirements.txt, .env* or .gitignore. If something in the contract looks wrong, do not work around it: report it in work_done / open_questions.
 - Import models from shared.models exactly as they are. Do not redefine or subclass them.

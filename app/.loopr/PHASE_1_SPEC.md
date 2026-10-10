@@ -25,6 +25,17 @@ Authority: specs/session-c-prd.md (sections 7, 10.3, 11, 13, 14), CONTRACT.md (s
    - changing pct 40 to 30 through the mock `allocate` lowers `reserved_for_freshers` and both audit checks still pass;
    - CONTRACT section 9 invariants on the mock result: no room over capacity, allocated <= total beds, every student has exactly one outcome with at least one reason code, determinism.
 
+## Hardening checklist (second executor turn; add a test for each item not already covered)
+
+- Empty students list through mock `allocate` (no crash, summary all zeros except total_beds).
+- `fresher_reservation_pct` 0 and 100; `reservation_base="total_beds"`; `retention_requires_confirmation=False`; `unused_reservation_released=False`; `freshers_may_compete_for_general_pool=True`.
+- A RETURNING student whose `current_room_id` is not in the hostel (no crash; sensible outcome).
+- `confirm_retention` on an already confirmed student (stable receipt id) and on a TRANSFER and a FRESHER (ValueError).
+- `compile_policy` with None-like and odd inputs: whitespace only, "%" only, "150%", "40 % and 30 %" (first match wins), very long text.
+- Audit functions given a result that lacks an outcome for a confirmed returning student (FAIL with the id in the evidence, no exception).
+- `view.py` HTML helpers escape `<script>` and quotes in names and reason text; `find_placeholders` finds `{x}` and ignores plain text.
+- Explanation texts match the CONTRACT section 5 templates word for word with numbers filled (spot-check each of the nine codes).
+
 ## Out of scope this phase
 
 `app/main.py`, any Streamlit rendering, `app/NEEDS.txt` (phase 2), real-mode imports, edits outside app/.
