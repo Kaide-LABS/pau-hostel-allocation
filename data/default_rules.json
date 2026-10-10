@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "fresher_reservation_pct": 40,
+  "reservation_base": "vacated_beds",
+  "fresher_requires_offer_letter": true,
+  "retention_requires_confirmation": true,
+  "retention_deadline": "2026-07-15T23:59:00",
+  "unused_reservation_released": true,
+  "freshers_may_compete_for_general_pool": false,
+  "tiebreak": "applied_at",
+  "source_text": ""
+}
