@@ -235,7 +235,7 @@ def _fallback(text: Any, error: str) -> CompileResult:
             unmapped_clauses=[],
             ambiguities=[],
             used_fallback=True,
-            error=(error or "unknown error")[:500],
+            error=_safe_error(error or "unknown error"),
         )
     except Exception as exc:
         return CompileResult(
@@ -243,15 +243,27 @@ def _fallback(text: Any, error: str) -> CompileResult:
             unmapped_clauses=[],
             ambiguities=[],
             used_fallback=True,
-            error=f"fallback failed: {type(exc).__name__}: {exc}"[:500],
+            error=_safe_error(f"fallback failed: {type(exc).__name__}: {exc}"),
         )
 
 
-def _api_error(exc: BaseException, api_key: str) -> str:
-    message = f"Anthropic API call failed: {type(exc).__name__}: {exc}"
+def _redact(message: str, api_key: str | None) -> str:
     if api_key:
         message = message.replace(api_key, "***")
     return message
+
+
+def _safe_error(message: str) -> str:
+    """Redact the resolved API key, then truncate, so no error string can carry the key."""
+    try:
+        api_key = _load_api_key()
+    except Exception:
+        api_key = None
+    return _redact(message, api_key)[:500]
+
+
+def _api_error(exc: BaseException, api_key: str) -> str:
+    return _redact(f"Anthropic API call failed: {type(exc).__name__}: {exc}", api_key)
 
 
 def _api_exceptions() -> tuple[type[BaseException], ...]:

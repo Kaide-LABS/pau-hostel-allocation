@@ -1,6 +1,6 @@
 # Policy Compiler Traceability Audit
 
-Final pytest result: `46 passed in 7.04s`
+Final pytest result: `50 passed, 1 warning in 10.34s`
 
 ## PRD Section 3 Behaviours
 
@@ -80,3 +80,10 @@ Final pytest result: `46 passed in 7.04s`
 | Explicit `None` values from model rules mean not stated and are dropped before merging defaults, preserving default `retention_deadline` | `policy/compile.py` `_validate_payload` lines 157-164; `_drop_null_values` lines 218-219 | `test_null_retention_deadline_keeps_default` lines 313-322 |
 | Non-null `retention_deadline` emitted by the model is preserved | `policy/compile.py` `_validate_payload` lines 157-164; `_drop_null_values` lines 218-219 | `test_non_null_retention_deadline_is_preserved` lines 325-335 |
 | Reservation-base prompt says available-bed sentences from graduating/non-confirming students set `vacated_beds` and must not be unmapped; all/total beds sets `total_beds`; unsure means ambiguous, not unmapped | `policy/prompts.py` `build_system_prompt` lines 24-26 and 37 | `test_system_prompt_contains_reservation_base_guidance` lines 158-164 |
+
+## Round 4 Fix Traceability
+
+| Requirement | Code trace | Test trace |
+|---|---|---|
+| 1. Resolved API key never appears in any `CompileResult.error`: `_fallback` redacts (key replaced with `***`) before truncating to 500 chars, covering the outer catch-all, validation-failure-after-retry and API-error paths | `policy/compile.py` `_fallback` lines 229-247; `_redact` lines 250-253; `_safe_error` lines 256-262; `_api_error` lines 265-266; `compile_policy` catch-all lines 37-42 | `test_key_in_exception_message_never_reaches_error` (OSError and RuntimeError, lines 435-446); `test_key_in_validation_error_never_reaches_error` (invalid `reservation_base` equal to the key, lines 449-463) |
+| 2. Offline integration: mocked-compile Rules for the 40% sample and the 30% variant drive `engine.allocate.allocate` over the fixtures at `now=2026-07-20 12:00`; `reserved_for_freshers` differs and equals `floor(pct/100 * available_beds)` (CONTRACT section 9); null `retention_deadline` keeps the default so the 40% run carries `RETENTION_AFTER_DEADLINE`. Skips if `engine.allocate` or `data/hostel.json` is missing | `policy/compile.py` `_validate_payload` null-drop and default merge lines 157-164 | `test_compiled_rules_drive_allocation_forty_vs_thirty` and helper `_allocate_with` lines 466-505 |

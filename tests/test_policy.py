@@ -430,3 +430,77 @@ def test_compile_policy_never_raises_sweep(monkeypatch, text, responses):
     result = compiler.compile_policy(text)
 
     assert isinstance(result, CompileResult)
+
+
+@pytest.mark.parametrize("exc_type", [OSError, RuntimeError])
+def test_key_in_exception_message_never_reaches_error(monkeypatch, exc_type):
+    secret = "sk-ant-test-0123456789-secret"
+    client = install_fake(monkeypatch, [exc_type(f"boom while using {secret} in header")], key=secret)
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    assert len(client.messages.calls) == 1
+    assert result.error
+    assert secret not in result.error
+    assert "***" in result.error
+
+
+def test_key_in_validation_error_never_reaches_error(monkeypatch):
+    secret = "sk-ant-test-0123456789-secret"
+    bad = tool_response(payload({"reservation_base": secret}))
+    client = install_fake(monkeypatch, [bad, bad], key=secret)
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    assert len(client.messages.calls) == 2
+    assert result.error
+    assert secret not in result.error
+    assert "***" in result.error
+    # The retry message sent to the model is built from the same validation error.
+    # It is not part of CompileResult, but the result itself must stay clean everywhere.
+    assert secret not in result.model_dump_json()
+
+
+def _allocate_with(monkeypatch, text, pct):
+    allocate_module = pytest.importorskip("engine.allocate")
+    if not (ROOT / "data" / "hostel.json").exists():
+        pytest.skip("data/hostel.json is missing")
+    from shared.store import load_hostel, load_students
+
+    # retention_deadline null: the compiler must keep the default deadline from load_default_rules().
+    install_fake(
+        monkeypatch,
+        [tool_response(payload({"fresher_reservation_pct": pct, "retention_deadline": None}))],
+    )
+    compiled = compiler.compile_policy(text)
+    assert compiled.used_fallback is False
+    assert compiled.rules.fresher_reservation_pct == pct
+    assert compiled.rules.retention_deadline == load_default_rules().retention_deadline
+    assert compiled.rules.retention_deadline is not None
+
+    return allocate_module.allocate(
+        load_hostel(), load_students(), compiled.rules, datetime(2026, 7, 20, 12, 0)
+    )
+
+
+def test_compiled_rules_drive_allocation_forty_vs_thirty(monkeypatch):
+    forty = _allocate_with(monkeypatch, SAMPLE_POLICY, 40)
+    thirty = _allocate_with(monkeypatch, SAMPLE_POLICY.replace("40%", "30%"), 30)
+
+    for result, pct in ((forty, 40), (thirty, 30)):
+        summary = result.summary
+        assert summary.reserved_for_freshers == (pct * summary.available_beds) // 100
+        assert result.rules.fresher_reservation_pct == pct
+
+    assert forty.summary.reserved_for_freshers != thirty.summary.reserved_for_freshers
+    assert forty.summary.reserved_for_freshers > thirty.summary.reserved_for_freshers
+
+    late_codes = [
+        code
+        for outcome in forty.outcomes
+        for code in outcome.reason_codes
+        if code == "RETENTION_AFTER_DEADLINE"
+    ]
+    assert late_codes, "default retention deadline should flag the late confirmation in the 40% run"
