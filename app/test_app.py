@@ -102,10 +102,13 @@ def test_empty_students_and_rule_edges() -> None:
         rules = mock.RULES.model_copy(update={"fresher_reservation_pct": pct}, deep=True)
         result = mock.allocate(mock.HOSTEL, mock.STUDENTS, rules, mock.FIXED_NOW)
         assert audit.check_reserved_within_limit(result)[0]
+        assert result.summary.reserved_for_freshers == (0 if pct == 0 else result.summary.available_beds)
     total_base = mock.RULES.model_copy(update={"reservation_base": "total_beds"}, deep=True)
     assert mock.allocate(mock.HOSTEL, mock.STUDENTS, total_base, mock.FIXED_NOW).summary.reserved_for_freshers == 3
     no_confirm = mock.RULES.model_copy(update={"retention_requires_confirmation": False}, deep=True)
-    assert audit.check_retention_honoured(mock.allocate(mock.HOSTEL, mock.STUDENTS, no_confirm, mock.FIXED_NOW), mock.STUDENTS)[0]
+    no_confirm_result = mock.allocate(mock.HOSTEL, mock.STUDENTS, no_confirm, mock.FIXED_NOW)
+    assert audit.check_retention_honoured(no_confirm_result, mock.STUDENTS)[0]
+    assert no_confirm_result.summary.retained == 3
     no_release = mock.RULES.model_copy(update={"unused_reservation_released": False}, deep=True)
     assert mock.allocate(mock.HOSTEL, mock.STUDENTS, no_release, mock.FIXED_NOW).summary.general_allocated >= 0
     fresher_general = mock.RULES.model_copy(update={"freshers_may_compete_for_general_pool": True}, deep=True)
@@ -129,12 +132,15 @@ def test_confirm_retention_edges() -> None:
     confirmed = mock.confirm_retention(mock.STUDENTS[0], mock.FIXED_NOW)
     confirmed_again = mock.confirm_retention(confirmed, mock.FIXED_NOW)
     assert confirmed_again.retention_receipt_id == confirmed.retention_receipt_id
-    for student in [s for s in mock.STUDENTS if s.category in {StudentCategory.TRANSFER, StudentCategory.FRESHER}][:2]:
+    transfer = next(s for s in mock.STUDENTS if s.category == StudentCategory.TRANSFER)
+    fresher = next(s for s in mock.STUDENTS if s.category == StudentCategory.FRESHER)
+    for student in (transfer, fresher):
         with pytest.raises(ValueError):
             mock.confirm_retention(student, mock.FIXED_NOW)
 
 
 def test_compile_policy_odd_inputs() -> None:
+    assert mock.compile_policy(None).used_fallback
     assert mock.compile_policy("   ").used_fallback
     assert mock.compile_policy("%").rules.fresher_reservation_pct == 40
     assert mock.compile_policy("150%").rules.fresher_reservation_pct == 100
@@ -154,6 +160,7 @@ def test_audit_missing_retained_outcome_fails_with_id() -> None:
 def test_html_escape_and_placeholders() -> None:
     assert "<script>" not in view.tag_html('<script>"x"</script>')
     assert "&quot;" in view.tag_html('"quoted"')
+    assert "&quot;" in view.tag_html('reason "quoted"')
     assert view.find_placeholders("hello {x} and {y}") == ["{x}", "{y}"]
     assert view.find_placeholders("plain text") == []
     assert "<" not in view.status_pill_html("allocated").split(">")[1].split("<")[0]

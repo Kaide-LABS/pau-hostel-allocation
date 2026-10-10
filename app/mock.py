@@ -107,6 +107,8 @@ def _base_and_reserved(hostel: Hostel, retained: int, rules: Rules) -> tuple[int
 def _retained(student: Student, rules: Rules) -> bool:
     if student.category != StudentCategory.RETURNING or not student.current_room_id:
         return False
+    if not rules.retention_requires_confirmation:
+        return True
     confirmed = student.retention_confirmed or not rules.retention_requires_confirmation
     if not confirmed:
         return False

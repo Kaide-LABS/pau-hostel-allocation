@@ -13,8 +13,10 @@ def check_retention_honoured(result: AllocationResult, run_students: list[Studen
         if student.category != StudentCategory.RETURNING or not student.current_room_id:
             continue
         confirmed = student.retention_confirmed or not result.rules.retention_requires_confirmation
-        on_time = not result.rules.retention_deadline or (
-            student.retention_confirmed_at is not None and student.retention_confirmed_at <= result.rules.retention_deadline
+        on_time = (
+            not result.rules.retention_requires_confirmation
+            or not result.rules.retention_deadline
+            or (student.retention_confirmed_at is not None and student.retention_confirmed_at <= result.rules.retention_deadline)
         )
         if confirmed and on_time:
             required.append(student.id)
