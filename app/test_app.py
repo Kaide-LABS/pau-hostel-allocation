@@ -62,7 +62,11 @@ def test_view_helpers() -> None:
     assert view.STATUS_STYLE["allocated"]["color"] == "#1a7f37"
     assert view.status_label(OutcomeStatus.WAITLISTED) == "Waitlisted"
     rows = dict(view.rules_rows(mock.RULES))
-    assert rows["Reservation base"] == "vacated beds"
+    assert rows["Reservation base"] == "available beds"
+    assert rows["Share of available beds reserved for new students"] == "40%"
+    total_rows = dict(view.rules_rows(mock.RULES.model_copy(update={"reservation_base": "total_beds"}, deep=True)))
+    assert total_rows["Reservation base"] == "total beds"
+    assert not any("vacated" in key or "vacated" in value for key, value in rows.items())
     assert rows["Offer letter required for reserved seats"] == "Yes"
     df = view.outcomes_dataframe(mock.ALLOCATION_RESULT, mock.STUDENTS)
     filtered = view.filter_outcomes(df, ["Waitlisted"])
@@ -691,3 +695,65 @@ def test_streamlit_renders_script_in_name_and_explanation_escaped(monkeypatch: p
     assert any("Hostile &lt;script&gt;alert(1)&lt;/script&gt; text" in value for value in rendered)
     at.selectbox(key="manager_explain_student_id").set_value("tr-1").run()
     assert not any("<script>" in item.value for item in at.markdown)
+
+
+def _install_recorders(monkeypatch: pytest.MonkeyPatch, allocate_fn, confirm_fn) -> dict[str, list]:
+    """Wrap allocate, confirm_retention and view.late_warning_text; record the `now` each receives."""
+    calls: dict[str, list] = {"allocate": [], "confirm": [], "late": []}
+    late_fn = view.late_warning_text
+
+    def rec_allocate(hostel, students, rules, now):
+        calls["allocate"].append(now)
+        return allocate_fn(hostel, students, rules, now)
+
+    def rec_confirm(student, now):
+        calls["confirm"].append(now)
+        return confirm_fn(student, now)
+
+    def rec_late(now, deadline, formatter):
+        calls["late"].append(now)
+        return late_fn(now, deadline, formatter)
+
+    monkeypatch.setattr(mock, "allocate", rec_allocate)
+    monkeypatch.setattr(mock, "confirm_retention", rec_confirm)
+    monkeypatch.setattr(view, "late_warning_text", rec_late)
+    return calls
+
+
+def _drive_confirm_and_run(at: AppTest, label: str) -> None:
+    at.run()
+    at.selectbox(key="selected_student_label").set_value(label).run()
+    at.button(key="confirm_retention").click().run()
+    at.button(key="run_allocation").click().run()
+    assert not at.exception
+    assert not at.error
+
+
+def test_streamlit_passes_naive_now_when_rules_deadline_is_naive(monkeypatch: pytest.MonkeyPatch, real) -> None:
+    # Each of the three call sites in main.py (late warning, confirm click, run allocation) must
+    # build `now` with view.now_like(rules.retention_deadline). Reverting any one to an aware
+    # datetime.now(timezone.utc) makes the recorded tzinfo non-None and fails this test.
+    real.rules = real.rules.model_copy(update={"retention_deadline": datetime(2026, 7, 15, 23, 59, 0)}, deep=True)
+    _wire_real_engine(monkeypatch, real)
+    calls = _install_recorders(monkeypatch, real.allocate, real.confirm_retention)
+    student = next(s for s in real.students if s.id == _unconfirmed_returning_id(real))
+    _drive_confirm_and_run(_app(monkeypatch), f"{student.name} ({student.category.value})")
+    assert len(calls["confirm"]) == 1
+    assert calls["confirm"][0].tzinfo is None
+    assert len(calls["allocate"]) >= 1
+    assert all(value.tzinfo is None for value in calls["allocate"])
+    assert len(calls["late"]) >= 1
+    assert all(value.tzinfo is None for value in calls["late"])
+
+
+def test_streamlit_passes_aware_now_when_rules_deadline_is_aware(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Mock rules carry an aware deadline, so now_like must track it and hand back aware UTC.
+    assert mock.RULES.retention_deadline is not None and mock.RULES.retention_deadline.tzinfo is not None
+    calls = _install_recorders(monkeypatch, mock.allocate, mock.confirm_retention)
+    _drive_confirm_and_run(_app(monkeypatch), _label("ret-unconfirmed"))
+    assert len(calls["confirm"]) == 1
+    assert calls["confirm"][0].utcoffset() == timedelta(0)
+    assert len(calls["allocate"]) >= 1
+    assert all(value.utcoffset() == timedelta(0) for value in calls["allocate"])
+    assert len(calls["late"]) >= 1
+    assert all(value.utcoffset() == timedelta(0) for value in calls["late"])
