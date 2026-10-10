@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from policy.prompts import SAMPLE_POLICY  # noqa: E402
+from policy.prompts import SAMPLE_POLICY, build_system_prompt  # noqa: E402
 from shared.models import CompileResult, Rules  # noqa: E402
 from shared.store import load_default_rules  # noqa: E402
 import policy.compile as compiler  # noqa: E402
@@ -143,6 +143,30 @@ def test_default_model_when_unset(monkeypatch):
     client = install_fake(monkeypatch, [tool_response(payload())])
     compiler.compile_policy(SAMPLE_POLICY)
     assert client.messages.calls[0]["model"] == "claude-haiku-5-5"
+
+
+def test_system_prompt_contains_unmapped_invariant_and_retention_guidance():
+    prompt = build_system_prompt(Rules())
+
+    assert "a sentence is unmapped ONLY if it states or implies no value for any Rules field" in prompt
+    assert "confirming a default still counts as mapping" in prompt
+    assert "returning students who confirm retention keep their rooms" in prompt
+    assert "retention is automatic without confirmation" in prompt
+
+
+def test_system_prompt_contains_worked_example_unmapped_sentence():
+    prompt = build_system_prompt(Rules())
+
+    assert "Visiting hours end at 8 p.m." in prompt
+
+
+def test_sample_policy_text_is_exact():
+    assert SAMPLE_POLICY == (
+        "Hostels reserve up to 40% of available bed spaces for newly admitted students. "
+        "Available bed spaces are those vacated by graduating students or by students who did not confirm they are returning. "
+        "Reserved spaces may only be allocated on presentation of a valid Offer of Provisional Admission letter. "
+        "Returning students who confirm retention keep their rooms."
+    )
 
 
 def test_invalid_output_then_valid_retries_once(monkeypatch):
