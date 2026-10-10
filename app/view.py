@@ -46,7 +46,7 @@ def outcomes_dataframe(result: AllocationResult, students: list[Student]) -> pd.
                 "Category": student.category.value if student else "",
                 "Status": status_label(outcome.status),
                 "Room": outcome.room_id or "",
-                "Waitlist position": outcome.waitlist_position or "",
+                "Waitlist position": str(outcome.waitlist_position) if outcome.waitlist_position else "",
                 "Reason": ", ".join(outcome.reason_codes),
             }
         )

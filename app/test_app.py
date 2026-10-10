@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 import pytest
+from streamlit.testing.v1 import AppTest
 
 from app import audit, mock, view
 from shared.models import AllocationResult, CompileResult, Hostel, OutcomeStatus, Rules, Student, StudentCategory, StudentOutcome
@@ -198,3 +200,141 @@ def test_explanation_template_spot_checks() -> None:
     assert "You were allocated from the 5 general beds, in application order" in explanations
     assert "All 5 general beds were filled before your application" in explanations
     assert "Your preferred room type was full, so you were placed in a" in explanations
+
+
+def _app(monkeypatch: pytest.MonkeyPatch, use_mock: str = "1") -> AppTest:
+    monkeypatch.setenv("USE_MOCK", use_mock)
+    at = AppTest.from_file(Path(__file__).with_name("main.py"))
+    at.default_timeout = 5
+    return at
+
+
+def _label(student_id: str) -> str:
+    student = next(student for student in mock.STUDENTS if student.id == student_id)
+    return f"{student.name} ({student.category.value})"
+
+
+def test_streamlit_demo_path_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
+    at = _app(monkeypatch)
+    at.run()
+    assert not at.exception
+
+    at.selectbox(key="selected_student_id").set_value(_label("ret-unconfirmed")).run()
+    assert not at.exception
+    at.button(key="confirm_retention").click().run()
+    assert not at.exception
+    assert at.session_state.last_receipt["ret-unconfirmed"].startswith("RET-PALM-")
+
+    at.button(key="compile_policy").click().run()
+    assert not at.exception
+    at.button(key="run_allocation").click().run()
+    assert not at.exception
+    reserved_40 = at.session_state.result.summary.reserved_for_freshers
+    assert at.metric
+
+    at.text_area(key="policy_text").set_value(mock.SAMPLE_POLICY.replace("40%", "30%")).run()
+    at.button(key="compile_policy").click().run()
+    at.button(key="run_allocation").click().run()
+    assert not at.exception
+    assert at.session_state.result.summary.reserved_for_freshers < reserved_40
+
+    at.text_area(key="policy_text").set_value("   ").run()
+    at.button(key="compile_policy").click().run()
+    assert not at.exception
+    assert any("Paste the policy text first." in item.value for item in at.warning)
+    assert any("PASS" in item.value for item in at.markdown)
+
+
+def test_no_stack_or_llm_imports_in_app() -> None:
+    forbidden = (
+        "st." + "exception",
+        "trace" + "back",
+        "import " + "anthropic",
+        "from " + "anthropic",
+        "import " + "openai",
+        "from " + "openai",
+    )
+    for path in Path("app").glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert not any(item in text for item in forbidden), path
+
+
+def test_real_mode_missing_engine_shows_one_error_without_stack(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("streamlit")
+    if Path("engine/allocate.py").exists() and Path("policy/compile.py").exists():
+        pytest.skip("real packages are present in this worktree")
+    at = _app(monkeypatch, "0")
+    at.run()
+    assert not at.exception
+    errors = [item.value for item in at.error]
+    assert len(errors) == 1
+    assert "Real engine or compiler not available yet:" in errors[0]
+
+
+def test_non_returning_confirm_button_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    at = _app(monkeypatch)
+    at.run()
+    at.selectbox(key="selected_student_id").set_value(_label("tr-1")).run()
+    assert at.button(key="confirm_retention").disabled
+    at.selectbox(key="selected_student_id").set_value(_label("fr-1")).run()
+    assert at.button(key="confirm_retention").disabled
+
+
+def test_run_before_compile_and_tab_state_persistence(monkeypatch: pytest.MonkeyPatch) -> None:
+    at = _app(monkeypatch)
+    at.run()
+    at.selectbox(key="selected_student_id").set_value(_label("ret-unconfirmed")).run()
+    at.button(key="run_allocation").click().run()
+    assert not at.exception
+    assert at.session_state.result is not None
+    assert any("Running with the default rules. Compile a policy to use your own." in item.value for item in at.info)
+    at.run()
+    assert at.session_state.selected_student_id == _label("ret-unconfirmed")
+
+
+def test_waitlisted_explanations_have_digits_and_no_placeholders(monkeypatch: pytest.MonkeyPatch) -> None:
+    at = _app(monkeypatch)
+    at.run()
+    at.button(key="run_allocation").click().run()
+    waitlisted = next(
+        outcome
+        for outcome in at.session_state.result.outcomes
+        if outcome.status == OutcomeStatus.WAITLISTED and any(char.isdigit() for char in outcome.explanation)
+    )
+    at.selectbox(key="selected_student_id").set_value(_label(waitlisted.student_id)).run()
+    student_text = " ".join(item.value for item in at.markdown)
+    assert any(char.isdigit() for char in waitlisted.explanation)
+    assert not view.find_placeholders(waitlisted.explanation)
+    assert waitlisted.explanation in student_text
+    at.selectbox(key="manager_explain_student_id").set_value(waitlisted.student_id).run()
+    manager_text = " ".join(item.value for item in at.markdown)
+    assert waitlisted.explanation in manager_text
+
+
+def test_reserved_sentence_updates_after_policy_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    at = _app(monkeypatch)
+    at.run()
+    at.button(key="compile_policy").click().run()
+    at.button(key="run_allocation").click().run()
+    text_40 = " ".join(item.value for item in at.markdown)
+    assert "40% of" in text_40
+    at.text_area(key="policy_text").set_value(mock.SAMPLE_POLICY.replace("40%", "30%")).run()
+    at.button(key="compile_policy").click().run()
+    at.button(key="run_allocation").click().run()
+    text_30 = " ".join(item.value for item in at.markdown)
+    assert "30% of" in text_30
+    assert "40% of" not in text_30
+
+
+def test_safe_call_message_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USE_MOCK", "1")
+    import app.main as main
+
+    def raises_value_error() -> None:
+        raise ValueError("specific value problem")
+
+    def raises_runtime_error() -> None:
+        raise RuntimeError("secret runtime detail")
+
+    assert main.safe_call("generic", raises_value_error) == (None, "specific value problem")
+    assert main.safe_call("generic", raises_runtime_error) == (None, "generic")
