@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from math import floor
 
+from app.view import is_after
 from shared.models import AllocationResult, OutcomeStatus, Student, StudentCategory
 
 
@@ -16,7 +17,7 @@ def check_retention_honoured(result: AllocationResult, run_students: list[Studen
         on_time = (
             not result.rules.retention_requires_confirmation
             or not result.rules.retention_deadline
-            or (student.retention_confirmed_at is not None and student.retention_confirmed_at <= result.rules.retention_deadline)
+            or (student.retention_confirmed_at is not None and not is_after(student.retention_confirmed_at, result.rules.retention_deadline))
         )
         if confirmed and on_time:
             required.append(student.id)

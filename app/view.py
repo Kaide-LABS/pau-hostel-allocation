@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from html import escape
 import re
+from typing import Callable
 
 import pandas as pd
 
@@ -69,10 +71,46 @@ def tag_html(text: str) -> str:
     return f'<span style="border:1px solid #d0d7de;border-radius:999px;padding:0.1rem 0.45rem;margin-right:0.25rem;">{escape(str(text), quote=True)}</span>'
 
 
+def base_label(rules: Rules) -> str:
+    return "available beds" if rules.reservation_base == "vacated_beds" else "total beds"
+
+
 def reserved_sentence(summary: AllocationSummary, rules: Rules) -> str:
     base = summary.available_beds if rules.reservation_base == "vacated_beds" else summary.total_beds
-    label = "available beds" if rules.reservation_base == "vacated_beds" else "total beds"
-    return f"{summary.reserved_for_freshers} of {summary.available_beds} available beds reserved for new students ({rules.fresher_reservation_pct}% of {base} {label})."
+    return (
+        f"{summary.reserved_for_freshers} of {summary.available_beds} available beds reserved for new students "
+        f"({rules.fresher_reservation_pct}% of {base} {base_label(rules)})."
+    )
+
+
+def _is_aware(value: datetime) -> bool:
+    return value.tzinfo is not None and value.tzinfo.utcoffset(value) is not None
+
+
+def now_like(reference: datetime | None) -> datetime:
+    """Current time in the same flavour as `reference`: aware UTC if it is aware, naive local otherwise."""
+    if reference is not None and _is_aware(reference):
+        return datetime.now(timezone.utc)
+    return datetime.now()
+
+
+def is_after(a: datetime | None, b: datetime | None) -> bool:
+    """True when `a` is strictly later than `b`. Never raises; a naive value is treated as local time."""
+    if a is None or b is None:
+        return False
+    try:
+        if _is_aware(a) != _is_aware(b):
+            a = a if _is_aware(a) else a.astimezone()
+            b = b if _is_aware(b) else b.astimezone()
+        return a > b
+    except (TypeError, ValueError, OverflowError, OSError):
+        return False
+
+
+def late_warning_text(now: datetime, deadline: datetime | None, formatter: Callable[[datetime | None], str]) -> str | None:
+    if not is_after(now, deadline):
+        return None
+    return f"The retention deadline was {formatter(deadline)}. A confirmation now will be recorded as late."
 
 
 def find_placeholders(text: str) -> list[str]:

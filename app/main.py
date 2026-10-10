@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -82,10 +82,6 @@ html, body, [class*="css"] { font-size: 18px; }
 }
 </style>
 """
-
-
-def now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def safe_call(label: str, fn: Callable[..., Any], *args: Any) -> tuple[Any | None, str | None]:
@@ -200,8 +196,10 @@ def render_student_tab() -> None:
         unsafe_allow_html=True,
     )
     deadline = st.session_state.rules.retention_deadline
-    if deadline and now() > deadline and student.category == StudentCategory.RETURNING and not student.retention_confirmed:
-        st.warning(f"The retention deadline was {_format_dt(deadline)}. A confirmation now will be recorded as late.")
+    if student.category == StudentCategory.RETURNING and not student.retention_confirmed:
+        late_text = view.late_warning_text(view.now_like(deadline), deadline, _format_dt)
+        if late_text:
+            st.warning(late_text)
 
     receipt = st.session_state.last_receipt.get(student.id) or student.retention_receipt_id
     if student.category != StudentCategory.RETURNING:
@@ -210,7 +208,7 @@ def render_student_tab() -> None:
     elif student.retention_confirmed:
         st.success(f"Receipt {receipt} recorded at {_format_dt(student.retention_confirmed_at)}.")
     elif st.button("Confirm I'm keeping my room", key="confirm_retention"):
-        call_now = now()
+        call_now = view.now_like(st.session_state.rules.retention_deadline)
         updated, error = safe_call("Could not record your confirmation. Please try again.", confirm_retention, student, call_now)
         if error:
             st.error(error)
@@ -303,7 +301,7 @@ def render_manager_tab() -> None:
     if st.button("Run allocation", key="run_allocation"):
         if st.session_state.compile_result is None:
             st.info("Running with the default rules. Compile a policy to use your own.")
-        call_now = now()
+        call_now = view.now_like(st.session_state.rules.retention_deadline)
         result, error = safe_call("Allocation failed.", allocate, st.session_state.hostel, st.session_state.students, st.session_state.rules, call_now)
         if error:
             st.error(f"Allocation failed: {error}")
