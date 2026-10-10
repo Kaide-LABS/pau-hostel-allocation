@@ -159,7 +159,7 @@ def _render_student_result(student: Student) -> None:
         st.write(f"Room: {outcome.room_id}")
     elif outcome.waitlist_position:
         st.write(f"Waitlist: #{outcome.waitlist_position} on the waitlist")
-    st.markdown(f'<div class="explanation-box">{outcome.explanation}</div>', unsafe_allow_html=True)
+    st.markdown(view.explanation_box_html(outcome.explanation), unsafe_allow_html=True)
     st.markdown(" ".join(view.tag_html(code) for code in outcome.reason_codes), unsafe_allow_html=True)
     if view.find_placeholders(outcome.explanation):
         st.warning("Explanation contains an unfilled placeholder.")
@@ -190,11 +190,7 @@ def render_student_tab() -> None:
     st.session_state.selected_student_id = selected_id
     student = _student_by_id(st.session_state.students)[selected_id]
     retention = "confirmed" if student.retention_confirmed else "not confirmed"
-    st.markdown(
-        f'<div class="student-card"><strong>{student.name}</strong><br>Category: {student.category.value}<br>'
-        f'Current room: {student.current_room_id or "None"}<br>Retention: {retention}</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(view.student_card_html(student, retention), unsafe_allow_html=True)
     deadline = st.session_state.rules.retention_deadline
     if student.category == StudentCategory.RETURNING and not student.retention_confirmed:
         late_text = view.late_warning_text(view.now_like(deadline), deadline, _format_dt)
@@ -278,7 +274,7 @@ def _render_result(result: AllocationResult) -> None:
         key="manager_explain_student_id",
     )
     outcome = _outcome_by_student(result)[choice]
-    st.markdown(f'<div class="explanation-box">{outcome.explanation}</div>', unsafe_allow_html=True)
+    st.markdown(view.explanation_box_html(outcome.explanation), unsafe_allow_html=True)
     if view.find_placeholders(outcome.explanation):
         st.warning("Explanation contains an unfilled placeholder.")
 
@@ -319,9 +315,7 @@ def render_manager_tab() -> None:
 
 
 def _audit_box(title: str, passed: bool, evidence: str) -> None:
-    state = "PASS" if passed else "FAIL"
-    cls = "audit-pass" if passed else "audit-fail"
-    st.markdown(f'<div class="{cls}"><strong>{state}</strong> {title}<br>{evidence}</div>', unsafe_allow_html=True)
+    st.markdown(view.audit_box_html(title, passed, evidence), unsafe_allow_html=True)
 
 
 def render_audit_tab() -> None:

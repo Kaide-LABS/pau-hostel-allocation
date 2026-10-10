@@ -403,8 +403,10 @@ def test_late_warning_text_handles_naive_deadline_without_raising() -> None:
 def test_audit_tolerates_mixed_naive_and_aware_datetimes() -> None:
     naive_rules = mock.RULES.model_copy(update={"retention_deadline": datetime(2026, 10, 9, 18, 0)}, deep=True)
     result = mock.ALLOCATION_RESULT.model_copy(update={"rules": naive_rules}, deep=True)
-    passed, _ = audit.check_retention_honoured(result, mock.STUDENTS)
-    assert isinstance(passed, bool)
+    # Naive deadline (local time) against aware UTC confirmations, with a margin of hours
+    # either way: ret-on-time is on time, ret-late is late, so exactly one is required.
+    assert audit.check_retention_honoured(result, mock.STUDENTS) == (True, "1 of 1 honoured")
+    assert audit.check_reserved_within_limit(result)[0]
 
 
 def test_reserved_sentence_base_label_for_both_bases() -> None:
@@ -506,11 +508,12 @@ def test_real_engine_late_live_confirmation_is_after_deadline(real) -> None:
     # Correct engine behaviour, not a failure: data/default_rules.json has a past
     # retention_deadline (2026-07-15), so a confirmation made now is late and the
     # engine records RETENTION_AFTER_DEADLINE. The UI warns before the click.
-    assert real.rules.retention_deadline is not None
-    assert view.is_after(view.now_like(real.rules.retention_deadline), real.rules.retention_deadline)
+    # The deadline is set explicitly so this keeps passing if the owner moves the fixture.
+    rules = real.rules.model_copy(update={"retention_deadline": datetime(2026, 7, 15, 23, 59, 0)}, deep=True)
+    assert view.is_after(view.now_like(rules.retention_deadline), rules.retention_deadline)
     student_id = _unconfirmed_returning_id(real)
-    _, students = _confirm_live(real, student_id, real.rules)
-    result = real.allocate(real.hostel, students, real.rules, view.now_like(real.rules.retention_deadline))
+    _, students = _confirm_live(real, student_id, rules)
+    result = real.allocate(real.hostel, students, rules, view.now_like(rules.retention_deadline))
     outcome = next(o for o in result.outcomes if o.student_id == student_id)
     assert "RETENTION_AFTER_DEADLINE" in outcome.reason_codes
     assert "RETAINED_CONFIRMED" not in outcome.reason_codes
@@ -519,7 +522,7 @@ def test_real_engine_late_live_confirmation_is_after_deadline(real) -> None:
     def fmt(value: datetime | None) -> str:
         return "Not recorded" if value is None else value.strftime("%d %b %Y, %H:%M:%S")
 
-    assert view.late_warning_text(view.now_like(real.rules.retention_deadline), real.rules.retention_deadline, fmt)
+    assert view.late_warning_text(view.now_like(rules.retention_deadline), rules.retention_deadline, fmt)
 
 
 def test_real_engine_on_time_live_confirmation_is_retained(real) -> None:
@@ -582,3 +585,109 @@ def test_real_engine_confirm_retention_rejects_non_returning(real) -> None:
     fresher = next(s for s in real.students if s.category == StudentCategory.FRESHER)
     with pytest.raises(ValueError):
         real.confirm_retention(fresher, view.now_like(real.rules.retention_deadline))
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a follow-up: main.py wiring of D1 (real engine behind the mock switch) and HTML escaping
+# ---------------------------------------------------------------------------
+
+
+def _wire_real_engine(monkeypatch: pytest.MonkeyPatch, real) -> None:
+    """Point the mock module's seams at the real engine and the naive-datetime fixtures."""
+    from copy import deepcopy
+
+    monkeypatch.setattr(mock, "allocate", real.allocate)
+    monkeypatch.setattr(mock, "confirm_retention", real.confirm_retention)
+    monkeypatch.setattr(mock, "load_hostel", lambda: deepcopy(real.hostel))
+    monkeypatch.setattr(mock, "load_students", lambda: deepcopy(real.students))
+    monkeypatch.setattr(mock, "load_default_rules", lambda: deepcopy(real.rules))
+
+
+def test_streamlit_wiring_with_real_engine_and_naive_fixtures(monkeypatch: pytest.MonkeyPatch, real) -> None:
+    # Would fail if main.py built an aware datetime.now(timezone.utc) or compared with a raw `>`:
+    # the pre-click late warning would raise TypeError (naive fixture deadline), and the confirm
+    # timestamp would make the real allocate raise ValueError ("Allocation failed").
+    # Explicit naive past deadline (the fixture's shape), so the late warning is always expected.
+    real.rules = real.rules.model_copy(update={"retention_deadline": datetime(2026, 7, 15, 23, 59, 0)}, deep=True)
+    _wire_real_engine(monkeypatch, real)
+    student = next(s for s in real.students if s.id == _unconfirmed_returning_id(real))
+    label = f"{student.name} ({student.category.value})"
+
+    at = _app(monkeypatch)
+    at.run()
+    assert not at.exception
+    assert not at.error
+
+    at.selectbox(key="selected_student_label").set_value(label).run()
+    assert not at.exception
+    assert not at.error
+    assert any("A confirmation now will be recorded as late." in item.value for item in at.warning)
+
+    at.button(key="confirm_retention").click().run()
+    assert not at.exception
+    assert not at.error
+    assert at.session_state.last_receipt[student.id].startswith("RET-")
+    assert any("Receipt RET-" in item.value for item in at.success)
+    confirmed = next(s for s in at.session_state.students if s.id == student.id)
+    assert confirmed.retention_confirmed_at is not None and confirmed.retention_confirmed_at.tzinfo is None
+
+    at.button(key="run_allocation").click().run()
+    assert not at.exception
+    assert not at.error
+    assert not any("Allocation failed" in item.value for item in at.error)
+    assert len(at.metric) == 7
+    metrics = {item.label: item.value for item in at.metric}
+    assert metrics["Total beds"] == "24"
+    assert metrics["Retained"] == "10"
+    assert at.session_state.result.summary.total_beds == 24
+    assert at.session_state.result.summary.retained == 10
+    audit_boxes = [item.value for item in at.markdown if 'class="audit-' in item.value]
+    assert len(audit_boxes) == 2
+    assert all("audit-pass" in box and "PASS" in box for box in audit_boxes)
+
+
+def test_html_snippets_escape_dynamic_strings() -> None:
+    attack = "<script>alert(1)</script>"
+    student = mock.STUDENTS[0].model_copy(update={"name": attack, "current_room_id": attack}, deep=True)
+    for html_text in (
+        view.explanation_box_html(attack),
+        view.student_card_html(student, attack),
+        view.audit_box_html(attack, True, attack),
+        view.tag_html(attack),
+        view.status_pill_html("allocated"),
+    ):
+        assert "<script>" not in html_text
+    assert "&lt;script&gt;" in view.explanation_box_html(attack)
+    # Normal text stays verbatim, including quotes and apostrophes.
+    plain = "You kept room P101. You confirmed retention on 2026-07-02 (receipt RET-PALM-3f9a1c). It's \"fine\"."
+    assert view.explanation_box_html(plain) == f'<div class="explanation-box">{plain}</div>'
+    assert plain in view.explanation_box_html(plain)
+
+
+def test_streamlit_renders_script_in_name_and_explanation_escaped(monkeypatch: pytest.MonkeyPatch) -> None:
+    attack = "<script>alert(1)</script>"
+    students = [s.model_copy(deep=True) for s in mock.STUDENTS]
+    target = next(s for s in students if s.id == "tr-1")
+    target.name = f"Student {attack}"
+    real_allocate = mock.allocate
+
+    def hostile_allocate(hostel, student_list, rules, now):
+        result = real_allocate(hostel, student_list, rules, now)
+        for outcome in result.outcomes:
+            if outcome.student_id == "tr-1":
+                outcome.explanation = f"Hostile {attack} text"
+        return result
+
+    monkeypatch.setattr(mock, "load_students", lambda: [s.model_copy(deep=True) for s in students])
+    monkeypatch.setattr(mock, "allocate", hostile_allocate)
+    at = _app(monkeypatch)
+    at.run()
+    at.button(key="run_allocation").click().run()
+    at.selectbox(key="selected_student_label").set_value(f"{target.name} (transfer)").run()
+    assert not at.exception
+    rendered = [item.value for item in at.markdown]
+    assert not any("<script>" in value for value in rendered)
+    assert any("&lt;script&gt;alert(1)&lt;/script&gt;" in value and "student-card" in value for value in rendered)
+    assert any("Hostile &lt;script&gt;alert(1)&lt;/script&gt; text" in value for value in rendered)
+    at.selectbox(key="manager_explain_student_id").set_value("tr-1").run()
+    assert not any("<script>" in item.value for item in at.markdown)

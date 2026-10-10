@@ -113,5 +113,27 @@ def late_warning_text(now: datetime, deadline: datetime | None, formatter: Calla
     return f"The retention deadline was {formatter(deadline)}. A confirmation now will be recorded as late."
 
 
+def _text(value: object) -> str:
+    # quote=False keeps apostrophes and quotes readable; only &, < and > are escaped.
+    return escape(str(value), quote=False)
+
+
+def explanation_box_html(explanation: str) -> str:
+    return f'<div class="explanation-box">{_text(explanation)}</div>'
+
+
+def student_card_html(student: Student, retention: str) -> str:
+    return (
+        f'<div class="student-card"><strong>{_text(student.name)}</strong><br>Category: {_text(student.category.value)}<br>'
+        f'Current room: {_text(student.current_room_id or "None")}<br>Retention: {_text(retention)}</div>'
+    )
+
+
+def audit_box_html(title: str, passed: bool, evidence: str) -> str:
+    state = "PASS" if passed else "FAIL"
+    cls = "audit-pass" if passed else "audit-fail"
+    return f'<div class="{cls}"><strong>{state}</strong> {_text(title)}<br>{_text(evidence)}</div>'
+
+
 def find_placeholders(text: str) -> list[str]:
     return re.findall(r"\{[^{}]+\}", text)
