@@ -133,7 +133,7 @@
   },
   {
     "id": "R12",
-    "name": "Yusuf Danjuma",
+    "name": "Yusuf Garbaye",
     "category": "returning",
     "current_room_id": "A202",
     "retention_confirmed": true,
@@ -325,7 +325,7 @@
   },
   {
     "id": "F08",
-    "name": "Femi Coker",
+    "name": "Femi Odukale",
     "category": "fresher",
     "current_room_id": null,
     "retention_confirmed": false,
@@ -349,7 +349,7 @@
   },
   {
     "id": "F10",
-    "name": "Kunle Balogun",
+    "name": "Kunle Adeyemo-Ilori",
     "category": "fresher",
     "current_room_id": null,
     "retention_confirmed": false,

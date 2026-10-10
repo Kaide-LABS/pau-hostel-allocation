@@ -99,4 +99,9 @@ Python 3.11 or newer, Streamlit, Pydantic v2, pytest, and the Anthropic Claude A
 
 ## Team
 
-[TEAM: names and roles of the registered team to be added]
+**Team Hafeedh Balogun**
+
+- Chineye Oforma
+- Tayo Abimbola
+- Adongo Kelvin
+- Hafeedh Balogun
