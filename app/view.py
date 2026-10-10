@@ -24,7 +24,7 @@ def status_label(status: OutcomeStatus | str) -> str:
 
 def rules_rows(rules: Rules) -> list[tuple[str, str]]:
     base = base_label(rules)
-    deadline = rules.retention_deadline.isoformat() if rules.retention_deadline else "None"
+    deadline = rules.retention_deadline.strftime("%d %b %Y %H:%M") if rules.retention_deadline else "None"
     return [
         ("Share of available beds reserved for new students", f"{rules.fresher_reservation_pct}%"),
         ("Reservation base", base),

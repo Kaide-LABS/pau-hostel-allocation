@@ -757,3 +757,14 @@ def test_streamlit_passes_aware_now_when_rules_deadline_is_aware(monkeypatch: py
     assert all(value.utcoffset() == timedelta(0) for value in calls["allocate"])
     assert len(calls["late"]) >= 1
     assert all(value.utcoffset() == timedelta(0) for value in calls["late"])
+
+
+def test_rules_rows_formats_retention_deadline_for_humans() -> None:
+    naive = mock.RULES.model_copy(update={"retention_deadline": datetime(2026, 10, 31, 23, 59, 0)}, deep=True)
+    aware = mock.RULES.model_copy(update={"retention_deadline": datetime(2026, 10, 31, 23, 59, 0, tzinfo=timezone.utc)}, deep=True)
+    missing = mock.RULES.model_copy(update={"retention_deadline": None}, deep=True)
+    assert dict(view.rules_rows(naive))["Retention deadline"] == "31 Oct 2026 23:59"
+    assert dict(view.rules_rows(aware))["Retention deadline"] == "31 Oct 2026 23:59"
+    assert dict(view.rules_rows(missing))["Retention deadline"] == "None"
+    for rules in (naive, aware, mock.RULES):
+        assert "T" not in dict(view.rules_rows(rules))["Retention deadline"]
