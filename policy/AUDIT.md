@@ -1,6 +1,6 @@
 # Policy Compiler Traceability Audit
 
-Final pytest result: `40 passed in 6.59s`
+Final pytest result: `40 passed in 5.88s`
 
 ## PRD Section 3 Behaviours
 
