@@ -26,6 +26,18 @@ Scope: PRD sections 3 (D1, D11, D12), 4 and 7 items 9 and 10. `allocate.py` is N
    - `confirm_retention`: happy path (confirmed true, `confirmed_at == now`, receipt matches `^RET-[A-Z0-9]+-[0-9a-f]{6}$`, input object unchanged); fixture student `R02` (unconfirmed returning) gets receipt prefix `RET-PALM-`; TRANSFER and FRESHER raise `ValueError`; idempotent (an already confirmed fixture student comes back equal, with the original receipt and timestamp); determinism (same inputs → same receipt); different `now` → different receipt.
    - Leave a clearly marked section for phase 2 tests; do not stub failing tests.
 
+## Continuation (second dispatch of this phase)
+
+A first dispatch already produced `engine/__init__.py`, `engine/explain.py`, `engine/retention.py` and `tests/test_engine.py` (git commit "chore: capture a dispatched turn's uncommitted working-tree changes"). Its handoff file was rejected only because it was written with a BOM, not because of the work. Do NOT rewrite those files. Read them (record them in artifacts_read), check them against this spec and the PRD, fix any real defect, and close these known test gaps with real assertions in `tests/test_engine.py`:
+
+1. Fallback hostel segment: when `load_hostel` raises (monkeypatch `engine.retention.load_hostel` to raise), the receipt starts with `RET-HOSTEL-`.
+2. Receipt format: `re.fullmatch(r"RET-[A-Z0-9]+-[0-9a-f]{6}", receipt)` replaces the hand-rolled hex helper.
+3. `explain_code("RETAINED_CONFIRMED", ctx)` with a `ctx` that has no `confirmed_at` key raises `KeyError` (a missing key is a bug, never a silent variant).
+4. `confirm_retention` on a confirmed student whose `retention_receipt_id` is None still issues a receipt (confirmed but receiptless is not "already confirmed with a receipt").
+5. The returned student passes `Student.model_validate(result.model_dump())` and is a different object from the input.
+
+Commit these changes (this is the commit multi-loopr requires of the turn).
+
 ## Acceptance
 
 - `.venv\Scripts\python.exe -m pytest tests/test_engine.py -q` passes from the repo root.
