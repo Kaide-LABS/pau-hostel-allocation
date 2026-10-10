@@ -1,0 +1,66 @@
+{
+  "id": "PALM",
+  "name": "Palmgrove Hall",
+  "rooms": [
+    {
+      "id": "A101",
+      "type": "single",
+      "capacity": 1,
+      "price_naira": 450000
+    },
+    {
+      "id": "A102",
+      "type": "single",
+      "capacity": 1,
+      "price_naira": 450000
+    },
+    {
+      "id": "A103",
+      "type": "double",
+      "capacity": 2,
+      "price_naira": 320000
+    },
+    {
+      "id": "A104",
+      "type": "double",
+      "capacity": 2,
+      "price_naira": 320000
+    },
+    {
+      "id": "A105",
+      "type": "double",
+      "capacity": 2,
+      "price_naira": 320000
+    },
+    {
+      "id": "A106",
+      "type": "double",
+      "capacity": 2,
+      "price_naira": 320000
+    },
+    {
+      "id": "A107",
+      "type": "double",
+      "capacity": 2,
+      "price_naira": 320000
+    },
+    {
+      "id": "A201",
+      "type": "quad",
+      "capacity": 4,
+      "price_naira": 220000
+    },
+    {
+      "id": "A202",
+      "type": "quad",
+      "capacity": 4,
+      "price_naira": 220000
+    },
+    {
+      "id": "A203",
+      "type": "quad",
+      "capacity": 4,
+      "price_naira": 220000
+    }
+  ]
+}
