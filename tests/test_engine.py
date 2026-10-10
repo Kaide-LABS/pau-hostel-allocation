@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import pytest
 
 from engine.explain import REASON_CODES, build_explanation, explain_code, fmt_dt
 from engine.retention import confirm_retention
-from shared.models import StudentCategory
+from shared.models import Student, StudentCategory
 from shared.store import load_students
 
 
@@ -77,6 +78,8 @@ def test_datetime_format_unknown_code_missing_key_empty_codes_and_joining() -> N
         explain_code("NOT_A_CODE", ctx)
     with pytest.raises(KeyError):
         explain_code("GENERAL_POOL_FULL", ctx)
+    with pytest.raises(KeyError):
+        explain_code("RETAINED_CONFIRMED", {"room": "A101"})
     with pytest.raises(ValueError):
         build_explanation([], ctx)
 
@@ -93,7 +96,22 @@ def test_confirm_retention_happy_path_uses_fixture_hostel_and_does_not_mutate_in
     assert confirmed.retention_confirmed_at == now
     assert confirmed.retention_receipt_id is not None
     assert confirmed.retention_receipt_id.startswith("RET-PALM-")
-    assert _receipt_suffix_is_hex6(confirmed.retention_receipt_id)
+    assert re.fullmatch(r"RET-[A-Z0-9]+-[0-9a-f]{6}", confirmed.retention_receipt_id)
+    assert Student.model_validate(confirmed.model_dump()) == confirmed
+    assert confirmed is not student
+
+
+def test_confirm_retention_uses_fallback_hostel_when_load_hostel_fails(monkeypatch) -> None:
+    def raise_load_error():
+        raise RuntimeError("fixture unavailable")
+
+    monkeypatch.setattr("engine.retention.load_hostel", raise_load_error)
+
+    confirmed = confirm_retention(_student("R02"), datetime(2026, 7, 12, 9, 30))
+
+    assert confirmed.retention_receipt_id is not None
+    assert confirmed.retention_receipt_id.startswith("RET-HOSTEL-")
+    assert re.fullmatch(r"RET-[A-Z0-9]+-[0-9a-f]{6}", confirmed.retention_receipt_id)
 
 
 def test_confirm_retention_rejects_transfer_and_fresher() -> None:
@@ -110,6 +128,24 @@ def test_confirm_retention_is_idempotent_for_already_confirmed_student() -> None
     assert confirmed == student
     assert confirmed.retention_confirmed_at == student.retention_confirmed_at
     assert confirmed.retention_receipt_id == student.retention_receipt_id
+
+
+def test_confirm_retention_issues_receipt_for_confirmed_student_without_receipt() -> None:
+    student = Student.model_validate(
+        {
+            **_student("R01").model_dump(),
+            "retention_receipt_id": None,
+        }
+    )
+    now = datetime(2026, 7, 12, 9, 30)
+
+    confirmed = confirm_retention(student, now)
+
+    assert confirmed is not student
+    assert confirmed.retention_confirmed is True
+    assert confirmed.retention_confirmed_at == now
+    assert confirmed.retention_receipt_id is not None
+    assert re.fullmatch(r"RET-[A-Z0-9]+-[0-9a-f]{6}", confirmed.retention_receipt_id)
 
 
 def test_confirm_retention_is_deterministic_and_changes_with_now() -> None:
@@ -136,8 +172,3 @@ def test_fixture_student_categories_used_by_retention_tests() -> None:
 
 def _student(student_id: str):
     return next(student for student in load_students() if student.id == student_id)
-
-
-def _receipt_suffix_is_hex6(receipt: str) -> bool:
-    suffix = receipt.rsplit("-", 1)[-1]
-    return len(suffix) == 6 and all(char in "0123456789abcdef" for char in suffix)
