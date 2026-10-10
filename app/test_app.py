@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -340,3 +342,243 @@ def test_safe_call_message_paths(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert main.safe_call("generic", raises_value_error) == (None, "specific value problem")
     assert main.safe_call("generic", raises_runtime_error) == (None, "generic")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a: timezone-safe helpers (D1) and the base-label wording fix
+# ---------------------------------------------------------------------------
+
+NAIVE = datetime(2026, 7, 15, 23, 59, 0)
+AWARE = datetime(2026, 7, 15, 23, 59, 0, tzinfo=timezone.utc)
+
+
+def test_now_like_follows_reference_flavour() -> None:
+    assert view.now_like(AWARE).tzinfo is not None
+    assert view.now_like(AWARE).utcoffset() == timedelta(0)
+    assert view.now_like(NAIVE).tzinfo is None
+    assert view.now_like(None).tzinfo is None
+    plus_one = AWARE.astimezone(timezone(timedelta(hours=1)))
+    assert view.now_like(plus_one).utcoffset() == timedelta(0)
+
+
+def test_is_after_all_aware_naive_combinations() -> None:
+    assert view.is_after(AWARE + timedelta(hours=2), AWARE)
+    assert not view.is_after(AWARE, AWARE + timedelta(hours=2))
+    assert view.is_after(NAIVE + timedelta(hours=2), NAIVE)
+    assert not view.is_after(NAIVE, NAIVE + timedelta(hours=2))
+    # Exactly one side naive: must not raise; the naive side is treated as local time.
+    assert view.is_after(datetime.now(timezone.utc) + timedelta(days=1), datetime.now())
+    assert not view.is_after(datetime.now(timezone.utc) - timedelta(days=1), datetime.now())
+    assert view.is_after(datetime.now() + timedelta(days=1), datetime.now(timezone.utc))
+    assert not view.is_after(datetime.now() - timedelta(days=1), datetime.now(timezone.utc))
+    local_aware = datetime.now().astimezone()
+    local_naive = local_aware.replace(tzinfo=None)
+    assert not view.is_after(local_aware, local_naive)
+    assert not view.is_after(local_naive, local_aware)
+
+
+def test_is_after_none_and_equal() -> None:
+    assert not view.is_after(AWARE, None)
+    assert not view.is_after(NAIVE, None)
+    assert not view.is_after(None, NAIVE)  # type: ignore[arg-type]
+    assert not view.is_after(AWARE, AWARE)
+    assert not view.is_after(NAIVE, NAIVE)
+
+
+def test_late_warning_text_handles_naive_deadline_without_raising() -> None:
+    def fmt(value: datetime | None) -> str:
+        return "Not recorded" if value is None else value.strftime("%d %b %Y, %H:%M:%S")
+
+    past_naive = datetime(2026, 7, 15, 23, 59, 0)
+    expected = "The retention deadline was 15 Jul 2026, 23:59:00. A confirmation now will be recorded as late."
+    assert view.late_warning_text(datetime.now(timezone.utc), past_naive, fmt) == expected
+    assert view.late_warning_text(view.now_like(past_naive), past_naive, fmt) == expected
+    assert view.late_warning_text(datetime.now(), None, fmt) is None
+    future_naive = datetime.now() + timedelta(days=30)
+    assert view.late_warning_text(datetime.now(timezone.utc), future_naive, fmt) is None
+    past_aware = datetime(2026, 7, 15, 23, 59, 0, tzinfo=timezone.utc)
+    assert view.late_warning_text(datetime.now(), past_aware, fmt) is not None
+
+
+def test_audit_tolerates_mixed_naive_and_aware_datetimes() -> None:
+    naive_rules = mock.RULES.model_copy(update={"retention_deadline": datetime(2026, 10, 9, 18, 0)}, deep=True)
+    result = mock.ALLOCATION_RESULT.model_copy(update={"rules": naive_rules}, deep=True)
+    passed, _ = audit.check_retention_honoured(result, mock.STUDENTS)
+    assert isinstance(passed, bool)
+
+
+def test_reserved_sentence_base_label_for_both_bases() -> None:
+    summary = mock.ALLOCATION_RESULT.summary
+    vacated = mock.RULES.model_copy(update={"reservation_base": "vacated_beds"}, deep=True)
+    total = mock.RULES.model_copy(update={"reservation_base": "total_beds"}, deep=True)
+    vacated_text = view.reserved_sentence(summary, vacated)
+    total_text = view.reserved_sentence(summary, total)
+    assert vacated_text == (
+        f"{summary.reserved_for_freshers} of {summary.available_beds} available beds reserved for new students "
+        f"(40% of {summary.available_beds} available beds)."
+    )
+    assert total_text == (
+        f"{summary.reserved_for_freshers} of {summary.available_beds} available beds reserved for new students "
+        f"(40% of {summary.total_beds} total beds)."
+    )
+    assert "total beds" not in vacated_text
+    assert total_text.endswith("total beds).")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a: real engine against data/ fixtures (offline, read-only)
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DATA_FILES = ("students.json", "hostel.json", "default_rules.json", "result.json")
+
+
+def _require_real_engine() -> None:
+    for relative in ("engine/allocate.py", "engine/retention.py", "data/students.json"):
+        if not (REPO_ROOT / relative).exists():
+            pytest.skip(f"{relative} is not present in this worktree")
+
+
+def _data_snapshot() -> dict[str, bytes | None]:
+    snapshot: dict[str, bytes | None] = {}
+    for name in DATA_FILES:
+        path = REPO_ROOT / "data" / name
+        snapshot[name] = path.read_bytes() if path.exists() else None
+    return snapshot
+
+
+@pytest.fixture
+def real(monkeypatch: pytest.MonkeyPatch):
+    """Real engine plus fixtures; fails the test if anything tries to write to data/."""
+    _require_real_engine()
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from engine.allocate import allocate
+    from engine.retention import confirm_retention
+    from shared import store
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("tests must not write to data/")
+
+    monkeypatch.setattr(store, "save_students", refuse)
+    monkeypatch.setattr(store, "save_result", refuse)
+    before = _data_snapshot()
+    ns = SimpleNamespace(
+        allocate=allocate,
+        confirm_retention=confirm_retention,
+        hostel=store.load_hostel(),
+        students=store.load_students(),
+        rules=store.load_default_rules(),
+    )
+    yield ns
+    assert _data_snapshot() == before
+
+
+def _unconfirmed_returning_id(real) -> str:
+    return next(s.id for s in real.students if s.category == StudentCategory.RETURNING and not s.retention_confirmed)
+
+
+def _confirm_live(real, student_id: str, rules: Rules):
+    student = next(s for s in real.students if s.id == student_id)
+    assert student.category == StudentCategory.RETURNING and not student.retention_confirmed
+    updated = real.confirm_retention(student, view.now_like(rules.retention_deadline))
+    return updated, [updated if s.id == updated.id else s for s in real.students]
+
+
+def test_real_engine_fixture_run_after_live_confirmation(real) -> None:
+    updated, students = _confirm_live(real, _unconfirmed_returning_id(real), real.rules)
+    assert updated.retention_confirmed and (updated.retention_receipt_id or "").startswith("RET-")
+    result = real.allocate(real.hostel, students, real.rules, view.now_like(real.rules.retention_deadline))
+    ids = [outcome.student_id for outcome in result.outcomes]
+    assert sorted(ids) == sorted(s.id for s in students)
+    assert len(set(ids)) == len(students)
+    assert all(outcome.reason_codes for outcome in result.outcomes)
+    assert result.summary.waitlisted > 0
+    assert audit.check_retention_honoured(result, students)[0]
+    assert audit.check_reserved_within_limit(result)[0]
+    df = view.outcomes_dataframe(result, students)
+    assert len(df) == len(students)
+    assert set(df["Status"]) <= {"Allocated", "Waitlisted", "Rejected"}
+    assert not view.filter_outcomes(df, ["Waitlisted"]).empty
+
+
+def test_real_engine_late_live_confirmation_is_after_deadline(real) -> None:
+    # Correct engine behaviour, not a failure: data/default_rules.json has a past
+    # retention_deadline (2026-07-15), so a confirmation made now is late and the
+    # engine records RETENTION_AFTER_DEADLINE. The UI warns before the click.
+    assert real.rules.retention_deadline is not None
+    assert view.is_after(view.now_like(real.rules.retention_deadline), real.rules.retention_deadline)
+    student_id = _unconfirmed_returning_id(real)
+    _, students = _confirm_live(real, student_id, real.rules)
+    result = real.allocate(real.hostel, students, real.rules, view.now_like(real.rules.retention_deadline))
+    outcome = next(o for o in result.outcomes if o.student_id == student_id)
+    assert "RETENTION_AFTER_DEADLINE" in outcome.reason_codes
+    assert "RETAINED_CONFIRMED" not in outcome.reason_codes
+    assert audit.check_retention_honoured(result, students)[0]
+
+    def fmt(value: datetime | None) -> str:
+        return "Not recorded" if value is None else value.strftime("%d %b %Y, %H:%M:%S")
+
+    assert view.late_warning_text(view.now_like(real.rules.retention_deadline), real.rules.retention_deadline, fmt)
+
+
+def test_real_engine_on_time_live_confirmation_is_retained(real) -> None:
+    rules = real.rules.model_copy(update={"retention_deadline": datetime.now() + timedelta(days=30)}, deep=True)
+    student_id = _unconfirmed_returning_id(real)
+    _, students = _confirm_live(real, student_id, rules)
+    result = real.allocate(real.hostel, students, rules, view.now_like(rules.retention_deadline))
+    outcome = next(o for o in result.outcomes if o.student_id == student_id)
+    assert outcome.status == OutcomeStatus.ALLOCATED
+    assert "RETAINED_CONFIRMED" in outcome.reason_codes
+    assert audit.check_retention_honoured(result, students)[0]
+
+
+def test_real_engine_aware_confirmation_with_naive_deadline_is_a_value_error(real) -> None:
+    # Documents why D1 matters: an aware timestamp against the naive fixture deadline is
+    # rejected by the engine with ValueError (which safe_call turns into a message), so the
+    # UI must build timestamps with view.now_like(rules.retention_deadline).
+    student = next(s for s in real.students if s.id == _unconfirmed_returning_id(real))
+    aware = real.confirm_retention(student, datetime.now(timezone.utc))
+    students = [aware if s.id == aware.id else s for s in real.students]
+    with pytest.raises(ValueError):
+        real.allocate(real.hostel, students, real.rules, datetime.now())
+    _, ok_students = _confirm_live(real, student.id, real.rules)
+    real.allocate(real.hostel, ok_students, real.rules, view.now_like(real.rules.retention_deadline))
+
+
+def test_real_engine_pct_40_to_30_lowers_reserved(real) -> None:
+    rules_30 = real.rules.model_copy(update={"fresher_reservation_pct": 30}, deep=True)
+    now = view.now_like(real.rules.retention_deadline)
+    result_40 = real.allocate(real.hostel, real.students, real.rules, now)
+    result_30 = real.allocate(real.hostel, real.students, rules_30, now)
+    assert real.rules.fresher_reservation_pct == 40
+    assert result_30.summary.reserved_for_freshers < result_40.summary.reserved_for_freshers
+    assert result_30.outcomes != result_40.outcomes
+    assert audit.check_reserved_within_limit(result_30)[0]
+    assert audit.check_retention_honoured(result_30, real.students)[0]
+    assert view.reserved_sentence(result_30.summary, result_30.rules).startswith(f"{result_30.summary.reserved_for_freshers} of")
+
+
+def test_real_engine_total_beds_base_sentence(real) -> None:
+    rules = real.rules.model_copy(update={"reservation_base": "total_beds"}, deep=True)
+    result = real.allocate(real.hostel, real.students, rules, view.now_like(rules.retention_deadline))
+    sentence = view.reserved_sentence(result.summary, result.rules)
+    assert f"% of {result.summary.total_beds} total beds)" in sentence
+    assert audit.check_reserved_within_limit(result)[0]
+
+
+def test_real_engine_explanations_have_no_placeholders_and_are_deterministic(real) -> None:
+    now = view.now_like(real.rules.retention_deadline)
+    result = real.allocate(real.hostel, real.students, real.rules, now)
+    for outcome in result.outcomes:
+        assert not view.find_placeholders(outcome.explanation), outcome.student_id
+        assert outcome.explanation.strip()
+    waitlisted = [o for o in result.outcomes if o.status == OutcomeStatus.WAITLISTED]
+    assert waitlisted and all(any(char.isdigit() for char in o.explanation) for o in waitlisted)
+    assert real.allocate(real.hostel, real.students, real.rules, now).outcomes == result.outcomes
+
+
+def test_real_engine_confirm_retention_rejects_non_returning(real) -> None:
+    fresher = next(s for s in real.students if s.category == StudentCategory.FRESHER)
+    with pytest.raises(ValueError):
+        real.confirm_retention(fresher, view.now_like(real.rules.retention_deadline))
