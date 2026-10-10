@@ -41,7 +41,7 @@ policy text --> Claude compiler --> validated Rules --> deterministic allocator 
 
 ## How to run
 
-With `USE_MOCK=0` the page shows "Data source: live engine". Without it the app runs on built-in mock data.
+Live engine is the default; `USE_MOCK=1` (as in `.env.example`) switches to mock data and the header pill reads "Mock data".
 
 Windows (Command Prompt; in PowerShell use `$env:USE_MOCK="0"` instead of `set`):
 

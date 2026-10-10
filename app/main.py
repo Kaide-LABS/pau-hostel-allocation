@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
 from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
-USE_MOCK = os.getenv("USE_MOCK", "1") == "1"
+USE_MOCK = os.getenv("USE_MOCK", "0") == "1"
 
 import pandas as pd
 import streamlit as st
