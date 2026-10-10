@@ -1,0 +1,20 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime output
+data/result.json
+data/*.tmp
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
