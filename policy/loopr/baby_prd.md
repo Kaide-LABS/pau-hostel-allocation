@@ -1,0 +1,26 @@
+# Baby PRD
+
+## TL;DR
+A hostel manager can paste a university's published hostel-allocation policy text and get back a validated, machine-readable rules object (shared.models.Rules) that the deterministic allocator can apply, with every policy sentence either mapped to a rule field or explicitly flagged (unmapped_clauses / ambiguities) so Student Affairs can audit it. compile_policy(text) -> CompileResult never raises and works offline: on any failure it returns the default rules with used_fallback=True and an error string, so the 3-minute demo cannot break. Done means pytest tests/test_policy.py passes offline and one real smoke call on the sample policy returns valid Rules with used_fallback=False. -- 2 acceptance criterion(ia), 1 scope edge(s) named.
+
+## Problem statement
+A hostel manager can paste a university's published hostel-allocation policy text and get back a validated, machine-readable rules object (shared.models.Rules) that the deterministic allocator can apply, with every policy sentence either mapped to a rule field or explicitly flagged (unmapped_clauses / ambiguities) so Student Affairs can audit it. compile_policy(text) -> CompileResult never raises and works offline: on any failure it returns the default rules with used_fallback=True and an error string, so the 3-minute demo cannot break. Done means pytest tests/test_policy.py passes offline and one real smoke call on the sample policy returns valid Rules with used_fallback=False.
+
+## Acceptance criteria
+- 1. `pytest tests/test_policy.py` passes with no network and no API key (the Anthropic client is mocked).
+2. With the sample policy, the mocked tool output compiles to fresher_reservation_pct=40, reservation_base="vacated_beds", fresher_requires_offer_letter=True, retention_requires_confirmation=True, source_text equal to the input; a 30% variant yields 30.
+3. Invalid tool output triggers exactly one retry with the validation error appended; a second failure returns load_default_rules() with used_fallback=True and error set.
+4. A missing ANTHROPIC_API_KEY returns the fallback immediately with no client call; empty text and garbage text never raise.
+5. A sentence that fits no Rules field appears verbatim in unmapped_clauses; an ambiguous sentence keeps the default value and appears in ambiguities.
+6. The call asserts messages.create was invoked once per attempt with no temperature or other sampling parameter (contract conflict resolved: claude-haiku-5-5 rejects temperature != 1 and the installed SDK has no such parameter), max_tokens<=1024, a single tool named emit_rules, and tool_choice={"type":"tool","name":"emit_rules"}.
+7. `python policy/smoke.py` with a real key prints a CompileResult with used_fallback=False and valid Rules for the sample policy; real-API spend stays under $2.
+8. multi-loopr's evidence check passes, and git shows changes only under policy/, tests/test_policy.py and specs/session-b-prd.md.
+- Watch-outs from the owner's contract: (1) The demo must work offline, so a missing key or no network must silently fall back to default rules, never crash or show a stack trace to the UI. (2) The compiler must never drop a policy sentence silently: anything unmapped goes verbatim into unmapped_clauses, because Student Affairs audits this and the pitch is that hostels (not the compiler) decide allocation. (3) Ambiguous wording, e.g. whether freshers can also compete for general beds, keeps the default value AND is listed in ambiguities, never guessed. (4) "Up to X%" means fresher_reservation_pct = X. (5) The demo's magic moment edits 40% to 30%, so the compiler must reliably pick up that change. (6) Total real-API spend under $2, key never committed, no co-author or AI attribution lines in commits.
+
+## Scope edges
+- **out**: Out of scope: any LLM provider other than Claude via the anthropic SDK; free-text parsing of model output (only the emit_rules tool-use block is read); streaming; multi-call or agentic compilation (exactly one messages.create per attempt, one retry max); any edit to shared/ or data/ files or other sessions' folders (engine/, app/); the allocator, explanations and UI; policy features outside the Rules fields (no new rule fields); caching or persisting compile results; OR-Tools; real-API spend over $2 (no real network calls in pytest). -- user-stated
+
+## Boundary
+PROPOSED BOUNDARY (draft for confirmation, not settled).
+This build covers: policy/compile.py with compile_policy(text) -> CompileResult (one Claude messages.create call per attempt, no temperature (see PRD section 9 item 2), max_tokens <= 1024, forced emit_rules tool-use output, Rules.model_validate, one retry with the validation error appended, then fallback to load_default_rules() with used_fallback=True and error set; never raises; immediate fallback with no key or no network); policy/prompts.py (system prompt and the sample-policy constant); policy/smoke.py (one real call); policy/NEEDS.txt; tests/test_policy.py (mocked client, offline); and specs/session-b-prd.md.
+It does NOT cover: any other LLM provider; free-text parsing of model output; streaming or multi-call/agentic compilation; edits to shared/, data/, engine/, app/ or other sessions' files; new Rules fields; caching or persistence of compile results; OR-Tools; real network calls in pytest; real-API spend over $2.
