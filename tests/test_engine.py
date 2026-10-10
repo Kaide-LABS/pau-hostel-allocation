@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
-from engine.explain import REASON_CODES, build_explanation, explain_code, fmt_dt
+from engine.explain import REASON_CODES, TEMPLATES, build_explanation, explain_code, fmt_dt
 from engine.retention import confirm_retention
 from shared.models import Student, StudentCategory
 from shared.store import load_students
@@ -43,6 +43,7 @@ def test_template_exactness_for_every_reason_code() -> None:
     }
 
     assert REASON_CODES == tuple(expected)
+    assert tuple(TEMPLATES) == REASON_CODES
     for code, sentence in expected.items():
         actual = explain_code(code, ctx)
         assert actual == sentence
