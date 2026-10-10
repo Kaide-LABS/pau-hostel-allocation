@@ -217,7 +217,10 @@ def test_large_garbage_can_be_compiled_as_unmapped(monkeypatch):
 def test_unmapped_clause_preserved_and_whitespace_snapped(monkeypatch):
     text = SAMPLE_POLICY + " This policy also mentions bicycle parking."
     expected = "This policy also mentions bicycle parking."
-    client = install_fake(monkeypatch, [tool_response(payload(unmapped=["This policy also mentions bicycle   parking."]))])
+    client = install_fake(
+        monkeypatch,
+        [tool_response(payload(unmapped=["This policy also mentions bicycle   parking.", expected]))],
+    )
 
     result = compiler.compile_policy(text)
 
@@ -299,6 +302,23 @@ def test_api_exception_falls_back_without_retry_and_redacts_key(monkeypatch):
     assert len(client.messages.calls) == 1
     assert secret not in result.error
     assert "***" in result.error
+
+
+def test_anthropic_auth_error_falls_back_without_retry(monkeypatch):
+    class FakeAPIError(Exception):
+        pass
+
+    class FakeAuthenticationError(FakeAPIError):
+        pass
+
+    monkeypatch.setattr(compiler, "anthropic", SimpleNamespace(APIError=FakeAPIError))
+    client = install_fake(monkeypatch, [FakeAuthenticationError("bad key")])
+
+    result = compiler.compile_policy(SAMPLE_POLICY)
+
+    assert result.used_fallback is True
+    assert len(client.messages.calls) == 1
+    assert "FakeAuthenticationError" in result.error
 
 
 def test_generic_exception_never_raises(monkeypatch):
