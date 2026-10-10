@@ -345,3 +345,29 @@ def test_prompt_injection_remains_inside_policy_tags(monkeypatch):
     assert content.startswith("<policy>")
     assert "ignore previous instructions" in content
     assert content.endswith("</policy>")
+
+
+@pytest.mark.parametrize(
+    ("text", "responses"),
+    [
+        ("", None),
+        ("   ", None),
+        (None, None),
+        (b"...", None),
+        (123, None),
+        ("x" * 20_001, None),
+        ("x" * 10_000, [tool_response(payload(unmapped=["x" * 10_000]))]),
+        (SAMPLE_POLICY, [tool_response(payload({"fresher_reservation_pct": 140})), tool_response(payload())]),
+        (SAMPLE_POLICY, [text_response(), tool_response(payload())]),
+        (SAMPLE_POLICY, [tool_response(payload(), stop_reason="max_tokens"), tool_response(payload())]),
+        (SAMPLE_POLICY, [tool_response(payload("bad")), tool_response(payload())]),
+        (SAMPLE_POLICY, [OSError("offline")]),
+    ],
+)
+def test_compile_policy_never_raises_sweep(monkeypatch, text, responses):
+    if responses is not None:
+        install_fake(monkeypatch, responses)
+
+    result = compiler.compile_policy(text)
+
+    assert isinstance(result, CompileResult)
