@@ -40,8 +40,21 @@ def fmt_dt(dt: datetime) -> str:
 def explain_code(code: str, ctx: Mapping[str, object]) -> str:
     if code not in TEMPLATES:
         raise ValueError(f"unknown reason code: {code}")
-    if code == "RETAINED_CONFIRMED" and ctx["confirmed_at"] is None:
-        template = _RETENTION_NOT_REQUIRED
+    if code == "RETAINED_CONFIRMED":
+        if ctx.get("confirmation_required", True) is False:
+            template = _RETENTION_NOT_REQUIRED
+        elif ctx["confirmed_at"] is None:
+            sentence = f"You kept room {_format_value(ctx['room'])}. Your retention confirmation is on record."
+            if ctx.get("receipt") is not None:
+                sentence = sentence[:-1] + f" (receipt {_format_value(ctx['receipt'])})."
+            return sentence
+        elif ctx.get("receipt") is None:
+            return (
+                f"You kept room {_format_value(ctx['room'])}. "
+                f"You confirmed retention on {_format_value(ctx['confirmed_at'])}."
+            )
+        else:
+            template = TEMPLATES[code]
     else:
         template = TEMPLATES[code]
     values = {key: _format_value(ctx[key]) for key in _placeholder_names(template)}

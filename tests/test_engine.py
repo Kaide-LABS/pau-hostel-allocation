@@ -53,11 +53,38 @@ def test_template_exactness_for_every_reason_code() -> None:
 
 
 def test_retained_confirmed_variant_when_confirmation_not_required() -> None:
-    ctx = {"room": "A101", "confirmed_at": None}
+    ctx = {"room": "A101", "confirmed_at": None, "confirmation_required": False}
 
     assert explain_code("RETAINED_CONFIRMED", ctx) == (
         "You kept room A101. Retention confirmation was not required under the current rules."
     )
+
+
+def test_retained_confirmed_variants_do_not_leak_none() -> None:
+    assert explain_code(
+        "RETAINED_CONFIRMED",
+        {
+            "room": "A101",
+            "confirmed_at": datetime(2026, 7, 2, 10, 14),
+            "receipt": None,
+        },
+    ) == "You kept room A101. You confirmed retention on 02 Jul 2026 10:14."
+    assert explain_code(
+        "RETAINED_CONFIRMED",
+        {
+            "room": "A101",
+            "confirmed_at": None,
+            "receipt": "RET-PALM-3f9a1c",
+        },
+    ) == "You kept room A101. Your retention confirmation is on record (receipt RET-PALM-3f9a1c)."
+    assert explain_code(
+        "RETAINED_CONFIRMED",
+        {
+            "room": "A101",
+            "confirmed_at": None,
+            "receipt": None,
+        },
+    ) == "You kept room A101. Your retention confirmation is on record."
 
 
 def test_datetime_format_unknown_code_missing_key_empty_codes_and_joining() -> None:
@@ -232,6 +259,7 @@ def test_fixture_allocation_invariants_and_room_capacity() -> None:
         assert set(outcome.reason_codes) <= valid_codes
         assert "{" not in outcome.explanation
         assert "}" not in outcome.explanation
+        assert "None" not in outcome.explanation
 
     deadline = load_default_rules().retention_deadline
     assert deadline is not None
@@ -389,6 +417,99 @@ def test_edge_rules_offer_letter_retention_deadline_and_preferences() -> None:
     assert "PREFERENCE_UNAVAILABLE" not in preference_by_id["F3"].reason_codes
 
 
+def test_retained_confirmed_allocation_variants_do_not_leak_none() -> None:
+    hostel = _small_hostel()
+    with_no_receipt = Student.model_validate(
+        {
+            **_make_student("R1", StudentCategory.RETURNING, "A1", True, datetime(2026, 6, 1), "single").model_dump(),
+            "retention_receipt_id": None,
+        }
+    )
+    with_no_time = Student.model_validate(
+        {
+            **_make_student("R1", StudentCategory.RETURNING, "A1", True, datetime(2026, 6, 1), "single").model_dump(),
+            "retention_confirmed_at": None,
+        }
+    )
+
+    no_receipt = allocate(hostel, [with_no_receipt], _rules(), _now()).outcomes[0]
+    no_time = allocate(hostel, [with_no_time], _rules(retention_deadline=None), _now()).outcomes[0]
+
+    assert no_receipt.explanation == "You kept room A1. You confirmed retention on 01 Jul 2026 08:00."
+    assert no_time.explanation == "You kept room A1. Your retention confirmation is on record (receipt RET-TINY-r1123)."
+    assert "None" not in no_receipt.explanation
+    assert "None" not in no_time.explanation
+
+
+def test_waitlist_positions_are_global_tiebreak_order() -> None:
+    result = _allocation()
+    waitlisted = [outcome for outcome in result.outcomes if outcome.status is OutcomeStatus.WAITLISTED]
+    by_student = {student.id: student for student in load_students()}
+
+    assert [outcome.waitlist_position for outcome in waitlisted] == [6, 1, 2, 3, 4, 5]
+    assert [
+        outcome.student_id
+        for outcome in sorted(
+            waitlisted,
+            key=lambda outcome: (
+                outcome.waitlist_position,
+                by_student[outcome.student_id].applied_at,
+                outcome.student_id,
+            ),
+        )
+    ] == ["F06", "F07", "F08", "F09", "F10", "R08"]
+
+
+def test_identical_applied_at_uses_student_id_tiebreak_in_reserved_and_general_pools() -> None:
+    hostel = _small_hostel()
+    same_time = datetime(2026, 6, 1, 8, 0)
+    reserved_students = [
+        _make_student("F2", StudentCategory.FRESHER, None, False, same_time, None, True),
+        _make_student("F1", StudentCategory.FRESHER, None, False, same_time, None, True),
+    ]
+    general_students = [
+        _make_student("T2", StudentCategory.TRANSFER, None, False, same_time, None),
+        _make_student("T1", StudentCategory.TRANSFER, None, False, same_time, None),
+    ]
+
+    reserved = allocate(hostel, reserved_students, _rules(fresher_reservation_pct=50), _now())
+    general = allocate(hostel, general_students, _rules(fresher_reservation_pct=0), _now())
+
+    assert _outcomes_by_id(reserved)["F1"].status is OutcomeStatus.ALLOCATED
+    assert _outcomes_by_id(reserved)["F2"].status is OutcomeStatus.WAITLISTED
+    assert _outcomes_by_id(general)["T1"].status is OutcomeStatus.ALLOCATED
+    assert _outcomes_by_id(general)["T2"].status is OutcomeStatus.ALLOCATED
+    assert _outcomes_by_id(general)["T1"].room_id == "A1"
+    assert _outcomes_by_id(general)["T2"].room_id == "B1"
+
+
+def test_every_returning_student_retained_leaves_only_vacated_bed_reservation_and_zero_student_case() -> None:
+    hostel = _small_hostel()
+    retained = [
+        _make_student("R1", StudentCategory.RETURNING, "A1", True, datetime(2026, 6, 1), None),
+        _make_student("R2", StudentCategory.RETURNING, "B1", True, datetime(2026, 6, 2), None),
+        _make_student("R3", StudentCategory.RETURNING, "B1", True, datetime(2026, 6, 3), None),
+        _make_student("F1", StudentCategory.FRESHER, None, False, datetime(2026, 6, 4), None, True),
+    ]
+
+    full = allocate(hostel, retained, _rules(fresher_reservation_pct=100), _now())
+    empty = allocate(hostel, [], _rules(), _now())
+
+    assert full.summary.available_beds == 0
+    assert full.summary.reserved_for_freshers == 0
+    assert _outcomes_by_id(full)["F1"].status is OutcomeStatus.WAITLISTED
+    assert empty.summary.model_dump() == {
+        "total_beds": 3,
+        "retained": 0,
+        "available_beds": 3,
+        "reserved_for_freshers": 1,
+        "freshers_allocated": 0,
+        "general_allocated": 0,
+        "waitlisted": 0,
+        "rejected": 0,
+    }
+
+
 def test_validation_errors_and_mixed_timezone_error() -> None:
     hostel = _small_hostel()
     student = _make_student("R1", StudentCategory.RETURNING, "A1", True, datetime(2026, 6, 1), "single")
@@ -412,6 +533,16 @@ def test_validation_errors_and_mixed_timezone_error() -> None:
     aware_rules = _rules(retention_deadline=datetime.fromisoformat("2026-07-15T23:59:00+00:00"))
     with pytest.raises(ValueError, match="mixed naive and timezone-aware datetimes"):
         allocate(hostel, [student], aware_rules, _now())
+
+    aware_applied = Student.model_validate(
+        {
+            **_make_student("T1", StudentCategory.TRANSFER, None, False, datetime(2026, 6, 2), None).model_dump(),
+            "applied_at": datetime.fromisoformat("2026-06-02T00:00:00+00:00"),
+        }
+    )
+    naive_applied = _make_student("T2", StudentCategory.TRANSFER, None, False, datetime(2026, 6, 1), None)
+    with pytest.raises(ValueError, match="mixed naive and timezone-aware datetimes"):
+        allocate(hostel, [aware_applied, naive_applied], _rules(), _now())
 
 
 def _student(student_id: str):

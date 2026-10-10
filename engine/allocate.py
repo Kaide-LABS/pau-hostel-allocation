@@ -207,7 +207,10 @@ def _retention_loss_code(student: Student, rules: Rules) -> str:
 
 
 def _sort_students(students: list[Student]) -> list[Student]:
-    return sorted(students, key=lambda student: (student.applied_at, student.id))
+    try:
+        return sorted(students, key=lambda student: (student.applied_at, student.id))
+    except TypeError as exc:
+        raise ValueError("mixed naive and timezone-aware datetimes") from exc
 
 
 def _is_general_candidate(
@@ -285,7 +288,8 @@ def _outcome(
         room_type = next(room.type for room in hostel.rooms if room.id == room_id)
     ctx = {
         "room": room_id,
-        "confirmed_at": student.retention_confirmed_at if rules.retention_requires_confirmation else None,
+        "confirmed_at": student.retention_confirmed_at,
+        "confirmation_required": rules.retention_requires_confirmation,
         "receipt": student.retention_receipt_id,
         "deadline": rules.retention_deadline,
         "reserved": reserved,
