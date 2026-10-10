@@ -473,14 +473,34 @@ def test_identical_applied_at_uses_student_id_tiebreak_in_reserved_and_general_p
     ]
 
     reserved = allocate(hostel, reserved_students, _rules(fresher_reservation_pct=50), _now())
-    general = allocate(hostel, general_students, _rules(fresher_reservation_pct=0), _now())
+    one_general_bed = Hostel(
+        id="ONE",
+        name="One Bed Hall",
+        rooms=[Room(id="A1", type="single", capacity=1, price_naira=1)],
+    )
+    general = allocate(one_general_bed, general_students, _rules(fresher_reservation_pct=0), _now())
 
     assert _outcomes_by_id(reserved)["F1"].status is OutcomeStatus.ALLOCATED
     assert _outcomes_by_id(reserved)["F2"].status is OutcomeStatus.WAITLISTED
     assert _outcomes_by_id(general)["T1"].status is OutcomeStatus.ALLOCATED
-    assert _outcomes_by_id(general)["T2"].status is OutcomeStatus.ALLOCATED
+    assert _outcomes_by_id(general)["T2"].status is OutcomeStatus.WAITLISTED
     assert _outcomes_by_id(general)["T1"].room_id == "A1"
-    assert _outcomes_by_id(general)["T2"].room_id == "B1"
+
+
+def test_rooms_are_filled_in_hostel_room_order() -> None:
+    hostel = _small_hostel()
+    students = [
+        _make_student("T2", StudentCategory.TRANSFER, None, False, datetime(2026, 6, 2), None),
+        _make_student("T1", StudentCategory.TRANSFER, None, False, datetime(2026, 6, 1), None),
+        _make_student("T3", StudentCategory.TRANSFER, None, False, datetime(2026, 6, 3), None),
+    ]
+
+    result = allocate(hostel, students, _rules(fresher_reservation_pct=0), _now())
+    by_id = _outcomes_by_id(result)
+
+    assert by_id["T1"].room_id == "A1"
+    assert by_id["T2"].room_id == "B1"
+    assert by_id["T3"].room_id == "B1"
 
 
 def test_every_returning_student_retained_leaves_only_vacated_bed_reservation_and_zero_student_case() -> None:
