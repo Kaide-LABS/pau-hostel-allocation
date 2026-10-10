@@ -179,16 +179,19 @@ def render_student_tab() -> None:
         _student_options(st.session_state.students),
         index=None,
         placeholder="Choose a student",
-        key="selected_student_id",
+        key="selected_student_label",
     )
     if not selected_label:
+        st.session_state.selected_student_id = None
         st.info("Choose a student to begin.")
         return
 
     selected_id = _student_id_from_label(selected_label)
     if selected_id is None:
+        st.session_state.selected_student_id = None
         st.warning("No student matches that selection.")
         return
+    st.session_state.selected_student_id = selected_id
     student = _student_by_id(st.session_state.students)[selected_id]
     retention = "confirmed" if student.retention_confirmed else "not confirmed"
     st.markdown(

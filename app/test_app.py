@@ -219,8 +219,9 @@ def test_streamlit_demo_path_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
     at.run()
     assert not at.exception
 
-    at.selectbox(key="selected_student_id").set_value(_label("ret-unconfirmed")).run()
+    at.selectbox(key="selected_student_label").set_value(_label("ret-unconfirmed")).run()
     assert not at.exception
+    assert at.session_state.selected_student_id == "ret-unconfirmed"
     at.button(key="confirm_retention").click().run()
     assert not at.exception
     assert at.session_state.last_receipt["ret-unconfirmed"].startswith("RET-PALM-")
@@ -274,22 +275,23 @@ def test_real_mode_missing_engine_shows_one_error_without_stack(monkeypatch: pyt
 def test_non_returning_confirm_button_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     at = _app(monkeypatch)
     at.run()
-    at.selectbox(key="selected_student_id").set_value(_label("tr-1")).run()
+    at.selectbox(key="selected_student_label").set_value(_label("tr-1")).run()
     assert at.button(key="confirm_retention").disabled
-    at.selectbox(key="selected_student_id").set_value(_label("fr-1")).run()
+    at.selectbox(key="selected_student_label").set_value(_label("fr-1")).run()
     assert at.button(key="confirm_retention").disabled
 
 
 def test_run_before_compile_and_tab_state_persistence(monkeypatch: pytest.MonkeyPatch) -> None:
     at = _app(monkeypatch)
     at.run()
-    at.selectbox(key="selected_student_id").set_value(_label("ret-unconfirmed")).run()
+    at.selectbox(key="selected_student_label").set_value(_label("ret-unconfirmed")).run()
     at.button(key="run_allocation").click().run()
     assert not at.exception
     assert at.session_state.result is not None
     assert any("Running with the default rules. Compile a policy to use your own." in item.value for item in at.info)
     at.run()
-    assert at.session_state.selected_student_id == _label("ret-unconfirmed")
+    assert at.session_state.selected_student_id == "ret-unconfirmed"
+    assert at.session_state.selected_student_label == _label("ret-unconfirmed")
 
 
 def test_waitlisted_explanations_have_digits_and_no_placeholders(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,7 +303,7 @@ def test_waitlisted_explanations_have_digits_and_no_placeholders(monkeypatch: py
         for outcome in at.session_state.result.outcomes
         if outcome.status == OutcomeStatus.WAITLISTED and any(char.isdigit() for char in outcome.explanation)
     )
-    at.selectbox(key="selected_student_id").set_value(_label(waitlisted.student_id)).run()
+    at.selectbox(key="selected_student_label").set_value(_label(waitlisted.student_id)).run()
     student_text = " ".join(item.value for item in at.markdown)
     assert any(char.isdigit() for char in waitlisted.explanation)
     assert not view.find_placeholders(waitlisted.explanation)
