@@ -128,6 +128,27 @@ def test_missing_current_room_confirmed_returning_does_not_crash() -> None:
     assert result.outcomes[0].status == OutcomeStatus.ALLOCATED
 
 
+def test_returning_room_not_in_hostel_does_not_crash() -> None:
+    student = Student(
+        id="ret-phantom-room",
+        name="Student Phantom Room",
+        category=StudentCategory.RETURNING,
+        current_room_id="ZZZ",
+        retention_confirmed=True,
+        retention_confirmed_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+        applied_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    )
+    result = mock.allocate(mock.HOSTEL, [student, *mock.STUDENTS], mock.RULES, mock.FIXED_NOW)
+    outcome = next(o for o in result.outcomes if o.student_id == "ret-phantom-room")
+    assert outcome.status == OutcomeStatus.ALLOCATED
+    assert outcome.room_id == "ZZZ"
+    assert "RETAINED_CONFIRMED" in outcome.reason_codes
+    capacities = {room.id: room.capacity for room in mock.HOSTEL.rooms}
+    for room_id, capacity in capacities.items():
+        assert sum(1 for o in result.outcomes if o.room_id == room_id) <= capacity
+    assert audit.check_retention_honoured(result, [student, *mock.STUDENTS])[0]
+
+
 def test_confirm_retention_edges() -> None:
     confirmed = mock.confirm_retention(mock.STUDENTS[0], mock.FIXED_NOW)
     confirmed_again = mock.confirm_retention(confirmed, mock.FIXED_NOW)
