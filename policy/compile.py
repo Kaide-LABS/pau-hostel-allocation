@@ -116,7 +116,6 @@ def _call_model(client: Any, text: str, system_prompt: str, user_message: str) -
     response = client.messages.create(
         model=os.getenv("ANTHROPIC_MODEL") or _DEFAULT_MODEL,
         max_tokens=1024,
-        temperature=0,
         system=system_prompt,
         tools=[_emit_rules_tool()],
         tool_choice={"type": "tool", "name": _TOOL_NAME},

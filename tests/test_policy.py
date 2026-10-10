@@ -126,7 +126,9 @@ def test_call_shape_and_model(monkeypatch):
 
     call = client.messages.calls[0]
     assert call["model"] == "custom-model"
-    assert call["temperature"] == 0
+    assert "temperature" not in call
+    assert "top_p" not in call
+    assert "top_k" not in call
     assert call["max_tokens"] <= 1024
     assert len(call["tools"]) == 1
     tool = call["tools"][0]
@@ -189,6 +191,17 @@ def test_guard_inputs_never_raise_or_call_client(bad_text):
     result = compiler.compile_policy(bad_text)
     assert isinstance(result, CompileResult)
     assert result.used_fallback is True
+
+
+def test_ten_thousand_character_garbage_never_raises(monkeypatch):
+    text = "x" * 10_000
+    install_fake(monkeypatch, [tool_response(payload(unmapped=[text]))])
+
+    result = compiler.compile_policy(text)
+
+    assert isinstance(result, CompileResult)
+    assert result.used_fallback is False
+    assert result.unmapped_clauses == [text]
 
 
 def test_large_garbage_can_be_compiled_as_unmapped(monkeypatch):
