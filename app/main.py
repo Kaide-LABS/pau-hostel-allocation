@@ -347,9 +347,16 @@ def _render_result(result: AllocationResult) -> None:
         default=["Allocated", "Waitlisted", "Rejected"],
         key="outcome_status_filter",
     )
-    df = view.filter_outcomes(view.outcomes_dataframe(result, st.session_state.run_students), statuses)
+    df = view.filter_outcomes(view.outcomes_dataframe(result, st.session_state.run_students, readable=True), statuses)
     styled = df.style.map(_status_cell_style, subset=["Status"])
     st.dataframe(styled, hide_index=True, use_container_width=True)
+    st.download_button(
+        "Download outcomes (CSV)",
+        data=view.outcomes_dataframe(result, st.session_state.run_students).to_csv(index=False).encode("utf-8"),
+        file_name="allocation_outcomes.csv",
+        mime="text/csv",
+        key="download_outcomes_csv",
+    )
 
     ordered = sorted(result.outcomes, key=lambda outcome: (outcome.status != OutcomeStatus.WAITLISTED, outcome.student_id))
     students = _student_by_id(st.session_state.run_students)

@@ -37,7 +37,26 @@ def rules_rows(rules: Rules) -> list[tuple[str, str]]:
     ]
 
 
-def outcomes_dataframe(result: AllocationResult, students: list[Student]) -> pd.DataFrame:
+REASON_LABELS = {
+    "RETAINED_CONFIRMED": "Kept room (confirmed on time)",
+    "RETENTION_NOT_CONFIRMED": "Did not confirm retention",
+    "RETENTION_AFTER_DEADLINE": "Confirmed after deadline",
+    "FRESHER_RESERVED_SEAT": "Reserved seat (new student)",
+    "FRESHER_RESERVATION_FULL": "Reserved seats full",
+    "NO_OFFER_LETTER": "No offer letter",
+    "GENERAL_POOL_ALLOCATED": "General pool",
+    "GENERAL_POOL_FULL": "General pool full",
+    "PREFERENCE_UNAVAILABLE": "Preferred room unavailable",
+}
+
+
+def readable_reasons(codes: list[str]) -> str:
+    return " \u00b7 ".join(REASON_LABELS.get(code, code) for code in codes)
+
+
+def outcomes_dataframe(result: AllocationResult, students: list[Student], readable: bool = False) -> pd.DataFrame:
+    """One row per student. `readable=False` keeps the raw reason codes (CSV); `readable=True` shows labels (screen)."""
+    reason_column = "Reason" if readable else "Reason codes"
     students_by_id = {student.id: student for student in students}
     rows = []
     for outcome in result.outcomes:
@@ -49,10 +68,11 @@ def outcomes_dataframe(result: AllocationResult, students: list[Student]) -> pd.
                 "Status": status_label(outcome.status),
                 "Room": outcome.room_id or "",
                 "Waitlist position": str(outcome.waitlist_position) if outcome.waitlist_position else "",
-                "Reason": ", ".join(outcome.reason_codes),
+                reason_column: readable_reasons(outcome.reason_codes) if readable else ", ".join(outcome.reason_codes),
+                "Explanation": outcome.explanation,
             }
         )
-    return pd.DataFrame(rows, columns=["Student", "Category", "Status", "Room", "Waitlist position", "Reason"])
+    return pd.DataFrame(rows, columns=["Student", "Category", "Status", "Room", "Waitlist position", reason_column, "Explanation"])
 
 
 def filter_outcomes(df: pd.DataFrame, statuses: list[str]) -> pd.DataFrame:
